@@ -111,6 +111,26 @@ class TestConversationProcessor:
         assert responses[0].prompts[0].text == "Hello, how can I help you?"
         assert responses[0].prompts[0].audio_content == b"audio_response_bytes"
 
+    def test_internal_interruption_event_is_tracked_without_wxcc_output(
+        self, processor
+    ):
+        processor.turn_tracker.start_speech()
+
+        response = processor._convert_connector_response_to_grpc(
+            {
+                "message_type": "turn_event",
+                "event": "interruption",
+                "source": "ces",
+                "vendor_event_at": 1234.5,
+            }
+        )
+
+        assert response is None
+        event = processor.turn_tracker.events()[-1]
+        assert event["event"] == "turn_interrupted"
+        assert event["source"] == "ces"
+        assert event["timestamp"] == 1234.5
+
     def test_initial_escalation_plays_audio_before_transfer(
         self, processor, mock_router
     ):
@@ -199,6 +219,8 @@ class TestConversationProcessor:
         }
         mock_router.route_request.side_effect = [None, iter([lex_response])]
         mock_router.should_observe_speech_boundaries.return_value = True
+        processor.turn_tracker.start_speech()
+        processor.turn_tracker.mark_boundary_emitted("START_OF_INPUT")
 
         responses = list(processor._process_audio_input(mock_audio_input))
 
@@ -209,12 +231,25 @@ class TestConversationProcessor:
         assert mock_router.route_request.call_args_list[1].args[1] == (
             "handle_speech_boundary"
         )
-        assert mock_router.route_request.call_args_list[1].args[3] == {
+        boundary_data = mock_router.route_request.call_args_list[1].args[3]
+        assert {
+            key: boundary_data[key]
+            for key in (
+                "conversation_id",
+                "virtual_agent_id",
+                "input_type",
+                "speech_boundary",
+            )
+        } == {
             "conversation_id": "test_conv_123",
             "virtual_agent_id": "test_agent_456",
             "input_type": "speech_boundary",
             "speech_boundary": {"kind": "speech_ended"},
         }
+        assert boundary_data["gateway_turn_id"] == "test_conv_123:turn:1"
+        assert boundary_data["gateway_turn_index"] == 1
+        assert boundary_data["ces_turn_index"] == 1
+        assert boundary_data["sequence"] > 0
 
     def test_gateway_sends_gecx_speech_end_before_normal_prompt(
         self, processor, mock_router, mock_audio_input
@@ -244,6 +279,8 @@ class TestConversationProcessor:
         ]
         mock_router.should_observe_speech_boundaries.return_value = True
         mock_router.should_coalesce_speech_end_with_response.return_value = True
+        processor.turn_tracker.start_speech()
+        processor.turn_tracker.mark_boundary_emitted("START_OF_INPUT")
 
         responses = list(processor._process_audio_input(mock_audio_input))
 
@@ -288,6 +325,8 @@ class TestConversationProcessor:
         ]
         mock_router.should_observe_speech_boundaries.return_value = True
         mock_router.should_coalesce_speech_end_with_response.return_value = True
+        processor.turn_tracker.start_speech()
+        processor.turn_tracker.mark_boundary_emitted("START_OF_INPUT")
 
         cancel_event = MagicMock()
         cancel_event.wait.return_value = False

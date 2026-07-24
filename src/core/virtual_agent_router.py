@@ -222,6 +222,14 @@ class VirtualAgentRouter:
             agent_id
         ).should_merge_speech_pauses()
 
+    def get_conversation_context(
+        self, agent_id: str, conversation_id: str
+    ) -> Dict[str, Any]:
+        """Return connector correlation fields for one active conversation."""
+        return self.get_connector_for_agent(agent_id).get_conversation_context(
+            conversation_id
+        )
+
     def route_request(self, agent_id: str, method: str, *args, **kwargs) -> Any:
         """
         Route a request to the appropriate connector.

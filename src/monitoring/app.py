@@ -808,6 +808,9 @@ def get_connection_data() -> Dict[str, Any]:
                             ),
                             "rpc_sessions": conversation_data.get("rpc_sessions", []),
                             "welcome_sent": conversation_data.get("welcome_sent", False),
+                            "turn_tracking": conversation_data.get(
+                                "turn_tracking", {}
+                            ),
                             "status": "Active",
                         }
                     )

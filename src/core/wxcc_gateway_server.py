@@ -34,6 +34,7 @@ from src.generated.voicevirtualagent_pb2_grpc import VoiceVirtualAgentServicer
 
 from .virtual_agent_router import VirtualAgentRouter
 from .health_service import HealthCheckService
+from .turn_tracker import SpeechStartDisposition, TurnTracker
 from src.utils.audio_normalizer import normalize_wxcc_audio
 from src.utils.silero_speech_boundary import (
     SileroSpeechBoundaryObserver,
@@ -82,8 +83,8 @@ class ConversationProcessor:
         ] = None
         self._speech_end_lock = threading.Lock()
         self._pending_speech_end_timer: Optional[threading.Timer] = None
-        self._speech_response_pending = False
         self._async_task_count = 0
+        self.turn_tracker = TurnTracker(conversation_id, logger=self.logger)
         vad_settings = dict(vad_config or {})
         self.vad_fallback_sample_rate_hertz = vad_settings.get(
             "fallback_sample_rate_hertz", 8000
@@ -135,6 +136,13 @@ class ConversationProcessor:
             "resume_speech_turn",
             self.conversation_id,
         )
+        disposition = self.turn_tracker.start_speech()
+        if disposition != SpeechStartDisposition.RESUMED:
+            self.logger.warning(
+                "Expected resumed speech state for conversation %s, got %s",
+                self.conversation_id,
+                disposition.value,
+            )
         self.logger.info(
             "Merged speech resumed during %dms end grace for conversation %s",
             self.speech_end_grace_ms,
@@ -164,10 +172,9 @@ class ConversationProcessor:
                         "commit_speech_turn",
                         self.conversation_id,
                     )
+                    self.turn_tracker.commit_speech_segment()
                     self._pending_speech_end_timer = None
-                    if not self._speech_response_pending:
-                        self._speech_response_pending = True
-                        owns_response_wait = True
+                    owns_response_wait = self.turn_tracker.begin_response_wait()
 
                 if not owns_response_wait:
                     self.logger.info(
@@ -192,7 +199,7 @@ class ConversationProcessor:
             finally:
                 with self._speech_end_lock:
                     if owns_response_wait:
-                        self._speech_response_pending = False
+                        self.turn_tracker.complete_response()
                     self._async_task_count = max(0, self._async_task_count - 1)
 
         timer = threading.Timer(self.speech_end_grace_ms / 1000.0, finalize)
@@ -210,29 +217,6 @@ class ConversationProcessor:
             self.conversation_id,
         )
         timer.start()
-
-    def _continue_pending_speech_turn(self) -> bool:
-        """Start another input segment without duplicating the WxCC boundary."""
-        with self._speech_end_lock:
-            if not self._speech_response_pending:
-                return False
-            self.router.route_request(
-                self.virtual_agent_id,
-                "handle_speech_boundary",
-                self.conversation_id,
-                {
-                    "conversation_id": self.conversation_id,
-                    "virtual_agent_id": self.virtual_agent_id,
-                    "input_type": "speech_boundary",
-                    "speech_boundary": {"kind": "speech_started"},
-                },
-            )
-        self.logger.info(
-            "Continued caller speech while the CES response was pending; "
-            "suppressed duplicate WxCC START_OF_INPUT for conversation %s",
-            self.conversation_id,
-        )
-        return True
 
     def process_request(self, request: VoiceVARequest) -> Iterator[VoiceVAResponse]:
         """
@@ -284,6 +268,12 @@ class ConversationProcessor:
                 self.conversation_id,
                 message_data,
             )
+            vendor_context = self.router.get_conversation_context(
+                self.virtual_agent_id,
+                self.conversation_id,
+            )
+            if isinstance(vendor_context, dict) and vendor_context:
+                self.turn_tracker.set_vendor_context(vendor_context)
 
             self.logger.debug(
                 f"Start Conversation Connector response received for {self.conversation_id}"
@@ -341,6 +331,7 @@ class ConversationProcessor:
     def _process_audio_input(self, audio_input) -> Iterator[VoiceVAResponse]:
         """Process audio input."""
         try:
+            self.turn_tracker.record_audio_frame(len(audio_input.caller_audio))
             # Convert request to connector format
             message_data = {
                 "conversation_id": self.conversation_id,
@@ -395,22 +386,55 @@ class ConversationProcessor:
                         self.virtual_agent_id
                     )
                 )
-                if (
-                    merges_speech_pauses
-                    and signal.kind == "speech_started"
-                    and self._resume_pending_speech_end()
-                ):
+                if signal.kind == "speech_started":
+                    if (
+                        merges_speech_pauses
+                        and self._resume_pending_speech_end()
+                    ):
+                        continue
+
+                    disposition = self.turn_tracker.start_speech()
+                    if disposition == SpeechStartDisposition.CONTINUED:
+                        self.router.route_request(
+                            self.virtual_agent_id,
+                            "handle_speech_boundary",
+                            self.conversation_id,
+                            {
+                                "conversation_id": self.conversation_id,
+                                "virtual_agent_id": self.virtual_agent_id,
+                                "input_type": "speech_boundary",
+                                "speech_boundary": {"kind": "speech_started"},
+                                **self.turn_tracker.context(),
+                            },
+                        )
+                        self.logger.info(
+                            "Continued caller speech while the CES response was "
+                            "pending; suppressed duplicate WxCC START_OF_INPUT "
+                            "for conversation %s",
+                            self.conversation_id,
+                        )
+                        continue
+                    if disposition in {
+                        SpeechStartDisposition.DUPLICATE,
+                        SpeechStartDisposition.TERMINAL,
+                    }:
+                        continue
+                    yield from self._process_speech_boundary(signal)
                     continue
-                if (
-                    merges_speech_pauses
-                    and signal.kind == "speech_started"
-                    and self._continue_pending_speech_turn()
-                ):
+
+                if not self.turn_tracker.detect_speech_end():
                     continue
-                if merges_speech_pauses and signal.kind == "speech_ended":
+                if merges_speech_pauses:
                     self._schedule_speech_end(signal.sample_rate_hertz)
                     continue
-                yield from self._process_speech_boundary(signal)
+
+                self.turn_tracker.commit_speech_segment()
+                owns_response_wait = self.turn_tracker.begin_response_wait()
+                try:
+                    yield from self._process_speech_boundary(signal)
+                finally:
+                    if owns_response_wait:
+                        self.turn_tracker.complete_response()
 
         except Exception as e:
             self.logger.error(
@@ -430,6 +454,13 @@ class ConversationProcessor:
             if signal.kind == "speech_started"
             else "END_OF_INPUT"
         )
+        if not self.turn_tracker.mark_boundary_emitted(event_type):
+            self.logger.warning(
+                "Suppressed duplicate %s for conversation %s",
+                event_type,
+                self.conversation_id,
+            )
+            return
         boundary_event = {
             "event_type": event_type,
             "name": "" if event_type == "START_OF_INPUT" else "end_of_input",
@@ -457,6 +488,7 @@ class ConversationProcessor:
             "virtual_agent_id": self.virtual_agent_id,
             "input_type": "speech_boundary",
             "speech_boundary": {"kind": signal.kind},
+            **self.turn_tracker.context(),
         }
         if speech_turn_committed:
             boundary_message_data["speech_turn_committed"] = True
@@ -677,6 +709,8 @@ class ConversationProcessor:
                 f"name='{event_input.name}', "
                 f"parameters={dict(event_input.parameters)}"
             )
+            if event_input.event_type == EventInput.EventType.NO_INPUT:
+                self.turn_tracker.record_no_input()
 
             # Handle SESSION_START event explicitly
             if event_input.event_type == EventInput.EventType.SESSION_START:
@@ -697,6 +731,7 @@ class ConversationProcessor:
                 self.logger.info(
                     f"Processing SESSION_END event for conversation {self.conversation_id}"
                 )
+                self.turn_tracker.terminate("client_session_end")
                 # Mark conversation for cleanup
                 self.can_be_deleted = True
 
@@ -833,6 +868,40 @@ class ConversationProcessor:
                 f"Converting connector response to gRPC format for {self.conversation_id}"
             )
             self.logger.debug(f"Connector response: {connector_response}")
+
+            message_type = connector_response.get("message_type", "")
+            if message_type == "turn_event":
+                if connector_response.get("event") == "interruption":
+                    self.turn_tracker.record_interruption(
+                        str(connector_response.get("source", "connector")),
+                        timestamp=(
+                            float(connector_response["vendor_event_at"])
+                            if isinstance(
+                                connector_response.get("vendor_event_at"),
+                                (int, float),
+                            )
+                            else None
+                        ),
+                    )
+                return None
+            has_vendor_output = bool(
+                connector_response.get("text")
+                or connector_response.get("audio_content")
+                or message_type in {"transfer", "session_end"}
+            )
+            if has_vendor_output:
+                vendor_output_at = connector_response.get(
+                    "vendor_first_output_at"
+                )
+                self.turn_tracker.record_vendor_output(
+                    timestamp=(
+                        float(vendor_output_at)
+                        if isinstance(vendor_output_at, (int, float))
+                        else None
+                    )
+                )
+            if message_type in {"transfer", "session_end"}:
+                self.turn_tracker.terminate(message_type)
 
             va_response = VoiceVAResponse()
 
@@ -1121,6 +1190,11 @@ class ConversationProcessor:
             self.logger.debug(
                 f"Final gRPC response created with {len(va_response.prompts)} prompts"
             )
+            if va_response.prompts or has_session_end_event or any(
+                event.event_type == OutputEvent.EventType.TRANSFER_TO_AGENT
+                for event in va_response.output_events
+            ):
+                self.turn_tracker.record_gateway_output()
             return va_response
 
         except Exception as e:
@@ -1177,10 +1251,10 @@ class ConversationProcessor:
         with self._speech_end_lock:
             timer = self._pending_speech_end_timer
             self._pending_speech_end_timer = None
-            self._speech_response_pending = False
             self._async_task_count = 0
         if timer is not None:
             timer.cancel()
+        self.turn_tracker.terminate(termination_reason)
         try:
             # End the conversation with the connector
             message_data = {
@@ -1327,6 +1401,7 @@ class WxCCGatewayServer(VoiceVirtualAgentServicer):
                 "session_started": processor.session_started,
                 "can_be_deleted": processor.can_be_deleted,
                 "start_time": processor.start_time,
+                "turn_tracking": processor.turn_tracker.snapshot(),
             }
         return active_conversations
 

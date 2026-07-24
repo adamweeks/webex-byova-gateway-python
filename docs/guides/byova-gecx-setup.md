@@ -212,6 +212,19 @@ the resumed onset, and keeps one CES input turn. Otherwise it commits the
 boundary normally. Configure the observer under the top-level
 `voice_activity_detection` block in `config/config.yaml`.
 
+Each conversation also has a gateway-owned turn tracker. Its `turn_event` log
+records a monotonically increasing sequence, WxCC conversation ID, CES session
+ID and turn index, gateway turn ID, input state, and timestamps for VAD
+boundaries, first CES output, first gateway output, completion, interruption,
+and terminal decisions. The tracker suppresses duplicate WxCC input boundaries;
+the GECX input buffer retains only configured pre-roll while a turn is inactive.
+
+The current state and the most recent 100 events are available under
+`turn_tracking` for each active conversation returned by
+`GET /api/connections`. These fields are intended for call correlation and
+development troubleshooting; do not treat the in-memory event window as
+durable telemetry.
+
 ### Audio format: WxCC expects a self-describing WAV clip
 
 This is the single most important detail. WxCC's `Prompt.audio_content` field

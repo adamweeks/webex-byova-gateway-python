@@ -148,6 +148,8 @@ class GECXStreamingSession:
         # prompt makes WxCC synthesize it and blocks the later CES audio/event.
         self._text_buffer: list[str] = []
         self._audio_buffer = bytearray()
+        self._turn_first_output_at_epoch: Optional[float] = None
+        self._turn_context: Dict[str, Any] = {}
         self._input_lock = threading.Lock()
         self._input_audio_buffer = bytearray()
         self._input_resume_buffer = bytearray()
@@ -349,8 +351,24 @@ class GECXStreamingSession:
                 self._input_turn_active = True
                 self._input_turn_paused = False
                 self._input_resume_buffer.clear()
+            with self._lock:
+                self._turn_first_output_at_epoch = None
             self._turn_completed.clear()
         return True
+
+    def set_turn_context(self, context: Dict[str, Any]) -> None:
+        """Retain gateway correlation fields for asynchronous CES events."""
+        with self._lock:
+            self._turn_context = {
+                key: context[key]
+                for key in (
+                    "gateway_turn_id",
+                    "gateway_turn_index",
+                    "ces_turn_index",
+                    "sequence",
+                )
+                if key in context
+            }
 
     def wait_for_turn_responses(
         self, timeout: float, *, terminate_on_timeout: bool = True
@@ -396,6 +414,7 @@ class GECXStreamingSession:
         """
         terminal_metadata = dict(metadata or {})
         decided_at = time.monotonic()
+        decided_at_epoch = time.time()
 
         with self._lifecycle_lock:
             if self._terminal_decision is not None:
@@ -434,8 +453,10 @@ class GECXStreamingSession:
             with self._lock:
                 buffered_text = "".join(self._text_buffer)
                 raw_audio = bytes(self._audio_buffer)
+                first_output_at = self._turn_first_output_at_epoch
                 self._text_buffer = []
                 self._audio_buffer = bytearray()
+                self._turn_first_output_at_epoch = None
 
             # Queue the stop sentinel exactly once. The request generator also
             # checks terminal state after dequeuing to close the final race where
@@ -460,6 +481,7 @@ class GECXStreamingSession:
                             audio_content=wav_audio,
                             barge_in_enabled=False,
                             response_type="final",
+                            vendor_first_output_at=first_output_at,
                         )
                     )
                     preserved_output = True
@@ -477,9 +499,11 @@ class GECXStreamingSession:
             self._terminal_event.set()
 
         self.logger.info(
-            "gecx_terminal_decision conversation_id=%s session=%s reason=%s "
-            "outcome=%s source=%s elapsed_seconds=%.3f metadata_keys=%s "
+            "gecx_terminal_decision timestamp=%.6f conversation_id=%s "
+            "session=%s reason=%s outcome=%s source=%s elapsed_seconds=%.3f "
+            "metadata_keys=%s "
             "end_session_metadata_keys=%s",
+            decided_at_epoch,
             self.conversation_id,
             self.session_path,
             reason.value,
@@ -660,7 +684,21 @@ class GECXStreamingSession:
                 )
 
         if message.interruption_signal:
-            self.logger.info(f"[{conversation_id}] [GECX] Barge-in interruption signal")
+            interruption_at = time.time()
+            with self._lock:
+                turn_context = dict(self._turn_context)
+            self.logger.info(
+                "gecx_turn_event event=interruption timestamp=%.6f "
+                "conversation_id=%s session=%s gateway_turn_id=%s "
+                "gateway_turn_index=%s ces_turn_index=%s gateway_sequence=%s",
+                interruption_at,
+                conversation_id,
+                self.session_path,
+                turn_context.get("gateway_turn_id", "-"),
+                turn_context.get("gateway_turn_index", "-"),
+                turn_context.get("ces_turn_index", "-"),
+                turn_context.get("sequence", "-"),
+            )
             # Keep lifecycle -> audio locking consistent with terminate() so a
             # concurrent interruption cannot erase the winning terminal response.
             with self._lifecycle_lock:
@@ -673,10 +711,21 @@ class GECXStreamingSession:
                             self.outbound_queue.get_nowait()
                         except queue.Empty:
                             break
+                    self.outbound_queue.put(
+                        {
+                            "message_type": "turn_event",
+                            "event": "interruption",
+                            "source": "ces",
+                            "vendor_event_at": interruption_at,
+                        }
+                    )
 
         if message.session_output:
             output = message.session_output
             has_terminal_output = bool(output.end_session)
+            with self._lock:
+                if self._turn_first_output_at_epoch is None:
+                    self._turn_first_output_at_epoch = time.time()
 
             if output.text:
                 self.logger.info(
@@ -763,8 +812,10 @@ class GECXStreamingSession:
                     return False
                 buffered_text = "".join(self._text_buffer)
                 raw_audio = bytes(self._audio_buffer)
+                first_output_at = self._turn_first_output_at_epoch
                 self._text_buffer = []
                 self._audio_buffer = bytearray()
+                self._turn_first_output_at_epoch = None
 
             wav_audio = (
                 self.connector.wrap_output_audio(raw_audio) if raw_audio else b""
@@ -784,6 +835,7 @@ class GECXStreamingSession:
                     text=buffered_text,
                     audio_content=wav_audio,
                     response_type=response_type,
+                    vendor_first_output_at=first_output_at,
                 )
             )
         return True
@@ -1305,6 +1357,7 @@ class GECXConnector(IVendorConnector):
             yield from stream_session.drain_responses()
             return
 
+        stream_session.set_turn_context(message_data)
         boundary_kind = message_data.get("speech_boundary", {}).get("kind")
         if boundary_kind == "speech_started":
             stream_session.begin_input_turn()
@@ -1346,6 +1399,19 @@ class GECXConnector(IVendorConnector):
 
     def get_available_agents(self) -> list:
         return self.agents
+
+    def get_conversation_context(self, conversation_id: str) -> Dict[str, Any]:
+        """Return CES session correlation fields for gateway turn logs."""
+        with self.sessions_lock:
+            stream_session = self.streaming_sessions.get(conversation_id)
+        if stream_session is None:
+            return {}
+        session_id = stream_session.session_path.rsplit("/", 1)[-1]
+        return {
+            "vendor_session_id": session_id,
+            "vendor_session_path": stream_session.session_path,
+            "ces_turn_offset": 1 if self.initial_message else 0,
+        }
 
     def start_conversation(
         self, conversation_id: str, request_data: Dict[str, Any]

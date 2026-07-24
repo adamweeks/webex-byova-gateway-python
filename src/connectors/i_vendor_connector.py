@@ -79,6 +79,11 @@ class IVendorConnector(ABC):
         """Commit a held caller turn before its response wait begins."""
         del conversation_id
 
+    def get_conversation_context(self, conversation_id: str) -> Dict[str, Any]:
+        """Return vendor correlation fields for structured gateway logging."""
+        del conversation_id
+        return {}
+
     def handle_speech_boundary(
         self, conversation_id: str, message_data: Dict[str, Any]
     ) -> Optional[Iterator[Optional[Dict[str, Any]]]]:

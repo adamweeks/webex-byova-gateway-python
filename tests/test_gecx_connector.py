@@ -268,7 +268,11 @@ class TestServerMessageMapping:
         )
 
         session.begin_input_turn()
-        session._handle_server_message(message)
+        with patch(
+            "src.connectors.gecx_connector.time.time",
+            return_value=1234.5,
+        ):
+            session._handle_server_message(message)
         completed, responses = session.wait_for_turn_responses(timeout=0.1)
 
         assert completed
@@ -280,6 +284,45 @@ class TestServerMessageMapping:
         # duplicate text-only prompt before playing the CES audio.
         assert responses[0]["audio_content"].startswith(b"RIFF")
         assert responses[0]["audio_content"].endswith(b"\x01\x02")
+        assert responses[0]["vendor_first_output_at"] == 1234.5
+
+    def test_interruption_emits_correlated_internal_turn_event(self, connector):
+        session = GECXStreamingSession(
+            connector=connector,
+            conversation_id="conv-1",
+            session_path="projects/p/locations/us/apps/a/sessions/s1",
+            deployment_path=connector.deployment_path,
+        )
+        session.set_turn_context(
+            {
+                "gateway_turn_id": "conv-1:turn:2",
+                "gateway_turn_index": 2,
+                "ces_turn_index": 3,
+                "sequence": 12,
+            }
+        )
+        message = SimpleNamespace(
+            recognition_result=None,
+            interruption_signal=SimpleNamespace(),
+            session_output=None,
+            go_away=None,
+            end_session=None,
+        )
+
+        with patch(
+            "src.connectors.gecx_connector.time.time",
+            return_value=1234.5,
+        ):
+            session._handle_server_message(message)
+
+        assert session.drain_responses() == [
+            {
+                "message_type": "turn_event",
+                "event": "interruption",
+                "source": "ces",
+                "vendor_event_at": 1234.5,
+            }
+        ]
 
     def test_end_session_emits_session_end_event(self, connector):
         session = GECXStreamingSession(
@@ -736,6 +779,26 @@ class TestSendMessage:
 class TestSpeechBoundaries:
     def test_declares_streaming_audio_delivery(self, connector):
         assert connector.get_audio_delivery_mode() == "streaming"
+
+    def test_exposes_ces_session_context(self, connector):
+        stream_session = MagicMock(
+            session_path="projects/p/locations/us/apps/a/sessions/ces-123"
+        )
+
+        with patch.object(
+            connector,
+            "streaming_sessions",
+            {"conv-1": stream_session},
+        ):
+            context = connector.get_conversation_context("conv-1")
+
+        assert context == {
+            "vendor_session_id": "ces-123",
+            "vendor_session_path": (
+                "projects/p/locations/us/apps/a/sessions/ces-123"
+            ),
+            "ces_turn_offset": 1,
+        }
 
     def test_opts_into_client_stream_end_cleanup(self, connector):
         assert connector.should_cleanup_on_client_stream_end() is True
