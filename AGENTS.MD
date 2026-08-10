@@ -88,7 +88,8 @@ webex-byova-gateway-python/
 │       ├── app.py
 │       └── templates/
 ├── main.py                  # Main entry point
-├── requirements.txt          # Python dependencies
+├── requirements.txt          # Gateway runtime dependencies
+├── requirements-dev.txt      # Local tools and gateway dependencies
 └── README.md
 ```
 
@@ -403,10 +404,26 @@ allowlist:
 scripts/build-runtime-release.sh --ref HEAD --output /tmp/byova-gateway-runtime.tar.gz
 ```
 
-Do not deploy or archive the repository root. In particular, `tools/byova_e2e/`, `tests/`,
-`docs/`, npm manifests and lockfiles, and AppleDouble files are development-only and must not
-be present on gateway hosts. Verify the generated archive and scan the installed runtime
-filesystem, not the source checkout, before closing dependency incidents.
+Do not deploy or archive the repository root. In particular, `tools/byova_e2e/`,
+`tools/voice_agent_lab/`, `tools/gecx_audio_lab/`, `tests/`, `docs/`,
+`requirements-dev.txt`, npm manifests and lockfiles, and AppleDouble files
+are development-only and must not be present on gateway hosts. Verify the generated archive
+and scan the installed runtime filesystem, not the source checkout, before closing dependency
+incidents.
+
+### Direct Voice Agent Audio Lab
+
+For local browser-to-provider testing that intentionally bypasses WxCC, use:
+
+```bash
+python -m tools.voice_agent_lab --gateway-config config/config.yaml
+```
+
+The lab reuses supported GECX and AWS Lex connector configuration and auth from the main
+gateway YAML. Its provider-native and WxCC-like profiles are diagnostic tools and must remain
+outside runtime release artifacts. Install its local HTTP/WebSocket dependency through
+`requirements-dev.txt`; gateway runtime builds install only `requirements.txt`. Optional local
+target overlays are gitignored.
 
 To begin development (for learning or building upon this example):
    
@@ -432,7 +449,7 @@ To begin development (for learning or building upon this example):
 3. **Install Dependencies**
    ```bash
    # Make sure you're in the activated virtual environment
-   pip install -r requirements.txt
+   pip install -r requirements-dev.txt
    ```
 
 2. **Generate gRPC Stubs**

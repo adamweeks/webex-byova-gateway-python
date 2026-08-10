@@ -423,8 +423,9 @@ other obligations that apply to the contact center.
 
 - Build immutable, versioned artifacts in CI from reviewed source.
 - Build gateway runtime archives with `scripts/build-runtime-release.sh`. Do not deploy the
-  repository root: local tools, tests, documentation, JavaScript manifests and lockfiles,
-  and workstation metadata are not runtime components and must not reach gateway hosts.
+  repository root: local tools, tests, documentation, `requirements-dev.txt`, JavaScript
+  manifests and lockfiles, and workstation metadata are not runtime components and must not
+  reach gateway hosts.
 - Run formatting, linting, type checks, unit tests, integration tests, dependency scans,
   secret scans, and artifact/image scans on every change.
 - Generate gRPC code deterministically and detect incompatible protocol changes.

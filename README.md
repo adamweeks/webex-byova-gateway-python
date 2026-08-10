@@ -179,6 +179,7 @@ endpoint testing, logs, and troubleshooting.
 | Add or configure connectors | [Connector Guide](src/connectors/README.md) |
 | Configure AWS Lex | [AWS Lex Configuration](docs/AWS_LEX_CONFIGURATION.md) |
 | Configure Google CX Agent Studio | [GECX Setup Guide](docs/guides/byova-gecx-setup.md) |
+| Test GECX or AWS Lex audio without a WxCC call | [Voice Agent Audio Lab](tools/voice_agent_lab/README.md) |
 | Configure TLS and network security | [Security Configuration](docs/Security-Configuration.md) |
 | Prepare a derivative for production | [Production Readiness](docs/PRODUCTION_READINESS.md) |
 
@@ -237,7 +238,8 @@ webex-byova-gateway-python/
 ├── tests/              # Automated test suite
 ├── tools/              # Local development and end-to-end test tools
 ├── main.py             # Application entry point
-└── requirements.txt    # Python dependencies
+├── requirements.txt    # Gateway runtime dependencies
+└── requirements-dev.txt # Local tools and gateway dependencies
 ```
 
 ## Build a Runtime Release Artifact
@@ -252,12 +254,15 @@ scripts/build-runtime-release.sh \
 
 The archive contains only the Python gateway runtime: `main.py`, Python dependency
 metadata, `audio/`, `config/`, `proto/`, and `src/`. It deliberately excludes `tools/`,
-`tests/`, `docs/`, JavaScript package manifests and lockfiles, and macOS AppleDouble files.
+`tests/`, `docs/`, `requirements-dev.txt`, JavaScript package manifests and lockfiles, and
+macOS AppleDouble files.
 
-`tools/byova_e2e/` is a local validation utility. Its browser dependencies must not be copied
-to an EC2 gateway or included in an image or release archive. Deploying the whole repository
-can cause host scanners to report development-only dependencies as if the gateway loaded
-them at runtime.
+`tools/byova_e2e/`, `tools/voice_agent_lab/`, and its `tools/gecx_audio_lab/` compatibility
+implementation are local validation utilities. Their browser assets and development
+dependencies are installed through `requirements-dev.txt` and must not be copied to an EC2
+gateway or included in an image or release archive. Gateway containers install only
+`requirements.txt`. Deploying the whole repository can cause host scanners to report
+development-only dependencies as if the gateway loaded them at runtime.
 
 Before deployment, scan the generated archive and verify its checksum. Keep environment
 configuration and secrets outside the artifact and inject them through the deployment

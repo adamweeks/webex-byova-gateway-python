@@ -276,5 +276,9 @@ tools/byova_e2e/src/*.egg-info/
 tools/byova_e2e/**/__pycache__/
 tools/byova_e2e/web/node_modules/
 tools/byova_e2e/web/dist/
+
+# Voice Agent Audio Lab local target configuration
+tools/gecx_audio_lab/config.local.yaml
+tools/voice_agent_lab/config.local.yaml
 ehthumbs.db
 Thumbs.db

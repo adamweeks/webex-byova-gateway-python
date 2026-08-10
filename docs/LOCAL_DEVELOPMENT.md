@@ -45,7 +45,7 @@ before attempting an end-to-end call.
 3. Install dependencies:
 
    ```bash
-   python -m pip install -r requirements.txt
+   python -m pip install -r requirements-dev.txt
    ```
 
 4. Generate the Python gRPC stubs:
@@ -99,6 +99,21 @@ The process starts:
 - The monitoring interface on `http://localhost:8080`
 
 Press `Ctrl+C` to stop the gateway and allow it to clean up active conversations.
+
+## Test Voice Agents Directly in a Browser
+
+To isolate provider audio and response timing from WxCC, run the local
+[Voice Agent Audio Lab](../tools/voice_agent_lab/README.md). It discovers supported GECX and
+AWS Lex targets from the same connector configuration used by the gateway. GECX keeps
+call-style audio open, while AWS connector-parity targets buffer and explicitly submit one
+utterance at a time.
+
+The lab is separate from `main.py`; it does not start a BYOVA datasource or accept WxCC
+traffic. Run `python -m tools.voice_agent_lab --gateway-config config/config.yaml`. Provider
+credentials stay server-side and are loaded from the selected connector's auth configuration
+or default cloud credential chain. A gitignored local overlay remains available for one-off
+targets. Install `requirements-dev.txt` for the lab's local-only HTTP and WebSocket server;
+gateway runtime builds continue to install only `requirements.txt`.
 
 ## Monitoring Interface
 
@@ -219,7 +234,7 @@ If necessary, recreate it:
 ```bash
 python -m venv venv
 source venv/bin/activate
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-dev.txt
 ```
 
 ### Generated Modules Cannot Be Imported

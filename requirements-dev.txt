@@ -1,0 +1,12 @@
+-r requirements.txt
+
+# Voice Agent Audio Lab (local development only)
+aiohttp>=3.12.15
+aiohappyeyeballs>=2.6.1
+aiosignal>=1.4.0
+attrs>=25.3.0
+frozenlist>=1.7.0
+multidict>=6.6.3
+yarl>=1.20.1
+idna>=3.10
+propcache>=0.3.2

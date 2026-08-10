@@ -34,7 +34,7 @@ tests/
 
 2. **Dependencies**: Ensure all test dependencies are installed
    ```bash
-   pip install -r requirements.txt
+   pip install -r requirements-dev.txt
    ```
 
 ### Running All Tests
