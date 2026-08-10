@@ -4,18 +4,42 @@ from pathlib import Path, PurePosixPath
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 BUILD_SCRIPT = REPOSITORY_ROOT / "scripts" / "build-runtime-release.sh"
+RUNTIME_REQUIREMENTS = REPOSITORY_ROOT / "requirements.txt"
+DEVELOPER_REQUIREMENTS = REPOSITORY_ROOT / "requirements-dev.txt"
+AUDIO_LAB_REQUIREMENTS = {
+    "aiohttp",
+    "aiohappyeyeballs",
+    "aiosignal",
+    "attrs",
+    "frozenlist",
+    "multidict",
+    "yarl",
+    "idna",
+    "propcache",
+}
 REQUIRED_MEMBERS = {
     "main.py",
     "requirements.txt",
 }
 FORBIDDEN_DIRECTORIES = {"docs", "tests", "tools"}
 FORBIDDEN_FILENAMES = {
+    "requirements-dev.txt",
     "package.json",
     "package-lock.json",
     "npm-shrinkwrap.json",
     "yarn.lock",
     "pnpm-lock.yaml",
 }
+
+
+def test_audio_lab_web_server_dependency_is_developer_only() -> None:
+    runtime_requirements = RUNTIME_REQUIREMENTS.read_text(encoding="utf-8")
+    developer_requirements = DEVELOPER_REQUIREMENTS.read_text(encoding="utf-8")
+
+    assert "-r requirements.txt" in developer_requirements
+    for requirement in AUDIO_LAB_REQUIREMENTS:
+        assert requirement not in runtime_requirements
+        assert requirement in developer_requirements
 
 
 def test_runtime_release_contains_only_runtime_files(tmp_path: Path) -> None:

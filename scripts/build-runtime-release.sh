@@ -99,7 +99,7 @@ for path in "${required_paths[@]}"; do
   fi
 done
 
-forbidden_pattern='(^|/)(tools|tests|docs)(/|$)|(^|/)(package.json|package-lock.json|npm-shrinkwrap.json|yarn.lock|pnpm-lock.yaml)$|(^|/)\._'
+forbidden_pattern='(^|/)(tools|tests|docs)(/|$)|(^|/)(requirements-dev.txt|package.json|package-lock.json|npm-shrinkwrap.json|yarn.lock|pnpm-lock.yaml)$|(^|/)\._'
 if grep -Eq "$forbidden_pattern" <<<"$archive_listing"; then
   echo "error: runtime archive contains development-only or npm manifest files" >&2
   grep -E "$forbidden_pattern" <<<"$archive_listing" >&2

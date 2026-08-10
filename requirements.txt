@@ -59,7 +59,6 @@ packaging>=25.0
 platformdirs>=4.3.8
 pluggy>=1.6.0
 iniconfig>=2.1.0
-attrs>=25.3.0
 Pygments>=2.19.2
 
 # Type checking
@@ -74,15 +73,6 @@ annotated-types>=0.7.0
 # Monitoring and metrics
 prometheus_client>=0.22.1
 
-# Async support (built-in modules, but listing dependencies)
-aiohttp>=3.12.15
-aiohappyeyeballs>=2.6.1
-aiosignal>=1.4.0
-frozenlist>=1.7.0
-multidict>=6.6.3
-yarl>=1.20.1
-idna>=3.10
-
 # MQTT support (if needed)
 asyncio-mqtt>=0.16.2
 paho-mqtt>=2.1.0
@@ -90,7 +80,6 @@ paho-mqtt>=2.1.0
 # C extensions
 cffi>=1.17.1
 pycparser>=2.22
-propcache>=0.3.2
 
 # Scientific computing (if needed)
 numpy>=2.2.0

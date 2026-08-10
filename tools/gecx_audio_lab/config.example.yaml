@@ -1,0 +1,20 @@
+# Copy this file to config.local.yaml. The local file is gitignored.
+# Project, app, and deployment values come from the CES app URL and deployment.
+default_target: draft-agent
+
+targets:
+  - id: draft-agent
+    label: Draft GECX app
+    project_id: YOUR_PROJECT_ID
+    location: us
+    application_id: YOUR_APPLICATION_ID
+    # Omitting deployment_id connects to the current root/draft agent.
+    credentials_env: DRAFT_GECX_GOOGLE_CREDENTIALS
+
+  - id: published-agent
+    label: Published GECX deployment
+    project_id: YOUR_PROJECT_ID
+    location: us
+    application_id: YOUR_APPLICATION_ID
+    deployment_id: YOUR_DEPLOYMENT_ID
+    credentials_env: PUBLISHED_GECX_GOOGLE_CREDENTIALS
