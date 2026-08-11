@@ -919,6 +919,56 @@ class TestServerMessageMapping:
         assert responses[1]["audio_content"] == b""
         assert session._output_audio_gate_state == "inspect"
 
+    def test_suppresses_long_quiet_linear16_frame_with_conversion_spikes(
+        self, gecx_config
+    ):
+        gecx_config["output_audio_encoding"] = "LINEAR16"
+        gecx_config["output_sample_rate_hertz"] = 24000
+        with patch("src.connectors.gecx_connector.ces_v1.SessionServiceClient"):
+            high_quality_connector = GECXConnector(gecx_config)
+        session = GECXStreamingSession(
+            connector=high_quality_connector,
+            conversation_id="conv-quiet-linear16-lead",
+            session_path="projects/p/locations/us/apps/a/sessions/s1",
+            deployment_path=high_quality_connector.deployment_path,
+        )
+        provider_audio = bytearray(int(33.696 * 24000) * 2)
+        artifact_start = int(10.72 * 24000)
+        for index in range(int(0.08 * 24000)):
+            sample = round(350 * math.sin(2 * math.pi * 440 * index / 24000))
+            struct.pack_into(
+                "<h",
+                provider_audio,
+                (artifact_start + index) * 2,
+                sample,
+            )
+
+        session._handle_server_message(
+            self._server_output(bytes(provider_audio))
+        )
+
+        assert session.drain_responses() == []
+        assert session._output_audio_gate_state == "gating"
+
+        speech = b"".join(
+            struct.pack(
+                "<h",
+                round(12000 * math.sin(2 * math.pi * 440 * index / 24000)),
+            )
+            for index in range(2400)
+        )
+        session._handle_server_message(
+            self._server_output(speech, turn_completed=True)
+        )
+        responses = list(session.iter_turn_responses(timeout=0.1))
+
+        assert [response["response_type"] for response in responses] == [
+            "chunk",
+            "final",
+        ]
+        assert len(responses[0]["audio_content"]) == 1600
+        assert session._output_audio_gate_state == "inspect"
+
     def test_trims_long_low_energy_prefix_inside_one_ces_frame(self, connector):
         session = GECXStreamingSession(
             connector=connector,

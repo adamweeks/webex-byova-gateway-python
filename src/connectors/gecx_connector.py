@@ -1468,6 +1468,27 @@ class GECXStreamingSession:
         )
         return playable_audio
 
+    def _begin_output_audio_gating(
+        self,
+        audio_bytes: bytes,
+        frame_rms: int,
+    ) -> bytes:
+        """Hold the tail of one anomalously long quiet leading frame."""
+        self._output_audio_gate_state = "gating"
+        keep_bytes = self.connector.output_audio_gate_tail_bytes
+        self._output_audio_gate_buffer.extend(audio_bytes[-keep_bytes:])
+        self.logger.warning(
+            "gecx_long_leading_audio_detected conversation_id=%s "
+            "frame_bytes=%d frame_seconds=%.3f frame_rms=%d "
+            "speech_rms_threshold=%d",
+            self.conversation_id,
+            len(audio_bytes),
+            len(audio_bytes) / self.connector.transport_output_sample_rate_hertz,
+            frame_rms,
+            self.connector.output_speech_rms_threshold,
+        )
+        return b""
+
     def _filter_leading_output_audio(self, audio_bytes: bytes) -> bytes:
         """Suppress only anomalously long low-energy audio before CES speech."""
         if self._output_audio_gate_state == "open":
@@ -1475,8 +1496,20 @@ class GECXStreamingSession:
 
         if self._output_audio_gate_state == "inspect":
             self._output_audio_gate_seen_bytes = len(audio_bytes)
-            speech_offset = self._find_output_speech_offset(audio_bytes)
             minimum_lead_bytes = self.connector.output_leading_audio_min_bytes
+            frame_rms = self._mulaw_rms(audio_bytes)
+
+            # PCM-to-mu-law conversion can turn a very quiet provider frame into
+            # a few isolated 20 ms windows above the speech threshold. Classify
+            # an anomalously long frame by its overall energy before searching
+            # those windows, or the quantization spikes can open the gate early.
+            if (
+                len(audio_bytes) >= minimum_lead_bytes
+                and frame_rms < self.connector.output_speech_rms_threshold
+            ):
+                return self._begin_output_audio_gating(audio_bytes, frame_rms)
+
+            speech_offset = self._find_output_speech_offset(audio_bytes)
 
             if speech_offset is not None:
                 if speech_offset >= minimum_lead_bytes:
@@ -1489,18 +1522,7 @@ class GECXStreamingSession:
                 self._output_audio_gate_state = "open"
                 return audio_bytes
 
-            self._output_audio_gate_state = "gating"
-            keep_bytes = self.connector.output_audio_gate_tail_bytes
-            self._output_audio_gate_buffer.extend(audio_bytes[-keep_bytes:])
-            self.logger.warning(
-                "gecx_long_leading_audio_detected conversation_id=%s "
-                "frame_bytes=%d frame_seconds=%.3f speech_rms_threshold=%d",
-                self.conversation_id,
-                len(audio_bytes),
-                len(audio_bytes) / self.connector.transport_output_sample_rate_hertz,
-                self.connector.output_speech_rms_threshold,
-            )
-            return b""
+            return self._begin_output_audio_gating(audio_bytes, frame_rms)
 
         previous_tail = bytes(self._output_audio_gate_buffer)
         combined_audio = previous_tail + audio_bytes
