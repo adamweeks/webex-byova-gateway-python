@@ -20,6 +20,12 @@ AUDIO_LAB_REQUIREMENTS = {
 REQUIRED_MEMBERS = {
     "main.py",
     "requirements.txt",
+    "src/generated/byova_common_pb2.py",
+    "src/generated/byova_common_pb2_grpc.py",
+    "src/generated/health_pb2.py",
+    "src/generated/health_pb2_grpc.py",
+    "src/generated/voicevirtualagent_pb2.py",
+    "src/generated/voicevirtualagent_pb2_grpc.py",
 }
 FORBIDDEN_DIRECTORIES = {"docs", "tests", "tools"}
 FORBIDDEN_FILENAMES = {

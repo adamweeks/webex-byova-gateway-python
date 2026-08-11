@@ -425,7 +425,9 @@ other obligations that apply to the contact center.
 - Build gateway runtime archives with `scripts/build-runtime-release.sh`. Do not deploy the
   repository root: local tools, tests, documentation, `requirements-dev.txt`, JavaScript
   manifests and lockfiles, and workstation metadata are not runtime components and must not
-  reach gateway hosts.
+  reach gateway hosts. The builder must regenerate and validate the Python gRPC modules from
+  the selected ref's protobuf definitions so the immutable artifact is independently
+  startable and does not depend on ignored workstation files.
 - Run formatting, linting, type checks, unit tests, integration tests, dependency scans,
   secret scans, and artifact/image scans on every change.
 - Generate gRPC code deterministically and detect incompatible protocol changes.

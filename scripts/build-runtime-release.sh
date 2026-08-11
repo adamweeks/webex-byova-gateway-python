@@ -68,6 +68,15 @@ runtime_paths=(
   src
 )
 
+required_generated_paths=(
+  src/generated/byova_common_pb2.py
+  src/generated/byova_common_pb2_grpc.py
+  src/generated/health_pb2.py
+  src/generated/health_pb2_grpc.py
+  src/generated/voicevirtualagent_pb2.py
+  src/generated/voicevirtualagent_pb2_grpc.py
+)
+
 for path in "${required_paths[@]}"; do
   if ! git cat-file -e "${resolved_ref}:${path}" 2>/dev/null; then
     echo "error: required runtime path is missing at ${ref}: ${path}" >&2
@@ -86,15 +95,84 @@ mkdir -p "$(dirname "$output")"
 output_dir="$(cd "$(dirname "$output")" && pwd -P)"
 output_path="${output_dir}/$(basename "$output")"
 temporary_archive="$(mktemp "${TMPDIR:-/tmp}/byova-runtime-release.XXXXXX")"
-trap 'rm -f "$temporary_archive"' EXIT
+staging_root="$(mktemp -d "${TMPDIR:-/tmp}/byova-runtime-staging.XXXXXX")"
+
+cleanup() {
+  rm -f "$temporary_archive"
+  rm -rf "$staging_root"
+}
+trap cleanup EXIT
 
 git archive --format=tar "$resolved_ref" -- "${archive_paths[@]}" \
-  | gzip -n > "$temporary_archive"
+  | tar -xf - -C "$staging_root"
+
+protoc_python=""
+protoc_candidates=()
+if [[ -n "${PYTHON:-}" ]]; then
+  protoc_candidates+=("$PYTHON")
+fi
+protoc_candidates+=(
+  "$repo_root/.venv/bin/python"
+  "$repo_root/venv/bin/python"
+  python3
+  python
+)
+
+for candidate in "${protoc_candidates[@]}"; do
+  if [[ "$candidate" == */* ]]; then
+    [[ -x "$candidate" ]] || continue
+  elif ! command -v "$candidate" >/dev/null 2>&1; then
+    continue
+  fi
+  if "$candidate" -c 'import grpc_tools.protoc' >/dev/null 2>&1; then
+    protoc_python="$candidate"
+    break
+  fi
+done
+
+if [[ -z "$protoc_python" ]]; then
+  echo "error: grpcio-tools is required to build runtime protobuf modules" >&2
+  exit 1
+fi
+
+proto_files=()
+while IFS= read -r proto_file; do
+  proto_files+=("$proto_file")
+done < <(find "$staging_root/proto" -maxdepth 1 -type f -name '*.proto' -print | sort)
+
+if [[ "${#proto_files[@]}" -eq 0 ]]; then
+  echo "error: runtime release contains no protobuf definitions" >&2
+  exit 1
+fi
+
+"$protoc_python" -m grpc_tools.protoc \
+  -I"$staging_root/proto" \
+  --python_out="$staging_root/src/generated" \
+  --grpc_python_out="$staging_root/src/generated" \
+  "${proto_files[@]}"
+
+for path in "${required_generated_paths[@]}"; do
+  if [[ ! -f "$staging_root/$path" ]]; then
+    echo "error: generated runtime module is missing: $path" >&2
+    exit 1
+  fi
+done
+
+(
+  cd "$staging_root"
+  COPYFILE_DISABLE=1 tar -cf - "${archive_paths[@]}"
+) | gzip -n > "$temporary_archive"
 
 archive_listing="$(tar -tzf "$temporary_archive")"
 for path in "${required_paths[@]}"; do
   if ! grep -Eq "^${path}(/|$)" <<<"$archive_listing"; then
     echo "error: runtime archive is missing required path: ${path}" >&2
+    exit 1
+  fi
+done
+for path in "${required_generated_paths[@]}"; do
+  if ! grep -Eq "^${path}$" <<<"$archive_listing"; then
+    echo "error: runtime archive is missing generated module: $path" >&2
     exit 1
   fi
 done
@@ -107,6 +185,7 @@ if grep -Eq "$forbidden_pattern" <<<"$archive_listing"; then
 fi
 
 mv "$temporary_archive" "$output_path"
+cleanup
 trap - EXIT
 
 if command -v sha256sum >/dev/null 2>&1; then

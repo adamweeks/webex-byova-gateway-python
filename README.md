@@ -262,6 +262,11 @@ metadata, `audio/`, `config/`, `proto/`, and `src/`. It deliberately excludes `t
 `tests/`, `docs/`, `requirements-dev.txt`, JavaScript package manifests and lockfiles, and
 macOS AppleDouble files.
 
+The builder regenerates every Python gRPC module from the selected ref's `proto/*.proto`
+files and includes those modules under `src/generated/`. Run it from an environment where
+`requirements.txt` is installed so `grpcio-tools` is available; an archive missing any
+required generated module fails validation before it can be deployed.
+
 `tools/byova_e2e/`, `tools/voice_agent_lab/`, and its `tools/gecx_audio_lab/` compatibility
 implementation are local validation utilities. Their browser assets and development
 dependencies are installed through `requirements-dev.txt` and must not be copied to an EC2

@@ -404,6 +404,10 @@ allowlist:
 scripts/build-runtime-release.sh --ref HEAD --output /tmp/byova-gateway-runtime.tar.gz
 ```
 
+The builder must regenerate the Python gRPC modules from the selected ref's protobuf
+definitions and include them under `src/generated/`. Run it with `grpcio-tools` available
+from `requirements.txt`; never rely on ignored workstation-generated modules.
+
 Do not deploy or archive the repository root. In particular, `tools/byova_e2e/`,
 `tools/voice_agent_lab/`, `tools/gecx_audio_lab/`, `tests/`, `docs/`,
 `requirements-dev.txt`, npm manifests and lockfiles, and AppleDouble files
