@@ -368,6 +368,16 @@ async function handleSocketMessage(event) {
       setTurnActive(Boolean(message.initialTurnPending));
       setConnection("connected", `${selectedTarget()?.provider === "aws_lex" ? "AWS Lex" : "GECX"} live`);
       logEvent(`Direct session ${message.sessionId.slice(0, 8)} started`);
+      if (selectedProfile()) {
+        const profile = selectedProfile();
+        const providerCodec = `${profile.outputEncoding}/${profile.outputSampleRateHertz.toLocaleString()} Hz`;
+        const transportCodec = `${profile.transportEncoding}/${profile.transportSampleRateHertz.toLocaleString()} Hz`;
+        logEvent(
+          profile.transcoded
+            ? `${profile.label}: provider ${providerCodec} → connector ${transportCodec}`
+            : `${profile.label}: provider ${providerCodec} passed through as ${transportCodec}`,
+        );
+      }
       if (message.initialTurnPending) {
         elements.talkHint.textContent = "opening turn / waiting for provider";
       } else {

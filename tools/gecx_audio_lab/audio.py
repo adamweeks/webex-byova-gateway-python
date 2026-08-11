@@ -8,6 +8,12 @@ import struct
 from dataclasses import dataclass
 from typing import Dict, Iterable, List
 
+from src.utils.telephony_audio import (
+    G711MulawOutputConverter,
+    linear16_to_mulaw,
+    mulaw_to_linear16,
+)
+
 
 @dataclass(frozen=True)
 class AudioProfile:
@@ -20,6 +26,18 @@ class AudioProfile:
     input_sample_rate_hertz: int
     output_encoding: str
     output_sample_rate_hertz: int
+    transport_encoding: str | None = None
+    transport_sample_rate_hertz: int | None = None
+
+    @property
+    def browser_encoding(self) -> str:
+        """Return the codec produced after optional local transcoding."""
+        return self.transport_encoding or self.output_encoding
+
+    @property
+    def browser_sample_rate_hertz(self) -> int:
+        """Return the sample rate produced after optional local transcoding."""
+        return self.transport_sample_rate_hertz or self.output_sample_rate_hertz
 
     def public_dict(self) -> Dict[str, object]:
         """Return the safe browser representation of this profile."""
@@ -31,6 +49,9 @@ class AudioProfile:
             "inputSampleRateHertz": self.input_sample_rate_hertz,
             "outputEncoding": self.output_encoding,
             "outputSampleRateHertz": self.output_sample_rate_hertz,
+            "transportEncoding": self.browser_encoding,
+            "transportSampleRateHertz": self.browser_sample_rate_hertz,
+            "transcoded": bool(self.transport_encoding),
         }
 
 
@@ -46,12 +67,29 @@ AUDIO_PROFILES: Dict[str, AudioProfile] = {
     ),
     "wxcc": AudioProfile(
         id="wxcc",
-        label="WxCC-like codec",
-        description="8 kHz mu-law in both directions, without a WxCC call.",
+        label="GECX direct mu-law",
+        description=(
+            "GECX returns 8 kHz mu-law directly; no connector output "
+            "conversion."
+        ),
         input_encoding="MULAW",
         input_sample_rate_hertz=8000,
         output_encoding="MULAW",
         output_sample_rate_hertz=8000,
+    ),
+    "connector_mulaw": AudioProfile(
+        id="connector_mulaw",
+        label="Connector mu-law from GECX PCM",
+        description=(
+            "GECX 24 kHz linear PCM output, locally filtered and encoded once "
+            "as 8 kHz mu-law."
+        ),
+        input_encoding="MULAW",
+        input_sample_rate_hertz=8000,
+        output_encoding="LINEAR16",
+        output_sample_rate_hertz=24000,
+        transport_encoding="MULAW",
+        transport_sample_rate_hertz=8000,
     ),
     "lex_native": AudioProfile(
         id="lex_native",
@@ -65,36 +103,56 @@ AUDIO_PROFILES: Dict[str, AudioProfile] = {
 }
 
 
-_MULAW_BIAS = 0x84
-_MULAW_CLIP = 32635
+@dataclass(frozen=True)
+class ConvertedOutputAudio:
+    """One CES output frame after its selected transport conversion."""
+
+    pcm16: bytes
+    transport_audio: bytes
+    transport_encoding: str
+    sample_rate_hertz: int
 
 
-def linear16_to_mulaw(pcm: bytes) -> bytes:
-    """Encode little-endian signed 16-bit PCM as G.711 mu-law."""
-    if len(pcm) % 2:
-        pcm = pcm[:-1]
-    encoded = bytearray()
-    for (sample,) in struct.iter_unpack("<h", pcm):
-        sign = 0x80 if sample < 0 else 0
-        magnitude = min(abs(sample), _MULAW_CLIP) + _MULAW_BIAS
-        exponent = max(0, min(7, magnitude.bit_length() - 8))
-        mantissa = (magnitude >> (exponent + 3)) & 0x0F
-        encoded.append((~(sign | (exponent << 4) | mantissa)) & 0xFF)
-    return bytes(encoded)
+class OutputAudioConverter:
+    """Convert provider output into the codec that the transport would carry."""
 
+    def __init__(self, profile: AudioProfile) -> None:
+        self.profile = profile
+        self._mulaw_converter: G711MulawOutputConverter | None = None
+        if profile.browser_encoding == "MULAW":
+            self._mulaw_converter = G711MulawOutputConverter(
+                profile.output_encoding,
+                profile.output_sample_rate_hertz,
+            )
 
-def mulaw_to_linear16(encoded: bytes) -> bytes:
-    """Decode G.711 mu-law as little-endian signed 16-bit PCM."""
-    samples: List[int] = []
-    for value in encoded:
-        value = (~value) & 0xFF
-        sign = value & 0x80
-        exponent = (value >> 4) & 0x07
-        mantissa = value & 0x0F
-        magnitude = ((mantissa << 3) + _MULAW_BIAS) << exponent
-        sample = magnitude - _MULAW_BIAS
-        samples.append(-sample if sign else sample)
-    return b"".join(struct.pack("<h", sample) for sample in samples)
+    def process(self, ces_audio: bytes) -> ConvertedOutputAudio:
+        """Return transport bytes plus browser-playable PCM for one CES frame."""
+        if self.profile.browser_encoding == "MULAW":
+            assert self._mulaw_converter is not None
+            transport_audio = self._mulaw_converter.process(ces_audio)
+            browser_pcm = mulaw_to_linear16(transport_audio)
+        elif (
+            self.profile.browser_encoding == "LINEAR16"
+            and self.profile.output_encoding == "LINEAR16"
+            and self.profile.browser_sample_rate_hertz
+            == self.profile.output_sample_rate_hertz
+        ):
+            transport_audio = ces_audio[: len(ces_audio) // 2 * 2]
+            browser_pcm = transport_audio
+        else:
+            raise ValueError(
+                "Unsupported CES-to-transport conversion: "
+                f"{self.profile.output_encoding}/{self.profile.output_sample_rate_hertz} "
+                f"to {self.profile.browser_encoding}/"
+                f"{self.profile.browser_sample_rate_hertz}"
+            )
+
+        return ConvertedOutputAudio(
+            pcm16=browser_pcm,
+            transport_audio=transport_audio,
+            transport_encoding=self.profile.browser_encoding,
+            sample_rate_hertz=self.profile.browser_sample_rate_hertz,
+        )
 
 
 def pcm16_rms(pcm: bytes) -> float:
@@ -135,6 +193,4 @@ def ces_input_audio(profile: AudioProfile, pcm16: bytes) -> bytes:
 
 def browser_output_audio(profile: AudioProfile, ces_audio: bytes) -> bytes:
     """Convert selected CES output into browser-playable PCM16."""
-    if profile.output_encoding == "MULAW":
-        return mulaw_to_linear16(ces_audio)
-    return ces_audio[: len(ces_audio) // 2 * 2]
+    return OutputAudioConverter(profile).process(ces_audio).pcm16

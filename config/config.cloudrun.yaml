@@ -50,9 +50,9 @@ connectors:
       language_code: "en-US"
       input_sample_rate_hertz: 8000
       input_audio_encoding: "MULAW"
-      # Required by the current raw BYOVA CHUNK output path.
-      output_sample_rate_hertz: 8000
-      output_audio_encoding: "MULAW"
+      # Recommended quality path. Use 8000/MULAW for direct CES mu-law.
+      output_sample_rate_hertz: 24000
+      output_audio_encoding: "LINEAR16"
       suppress_long_leading_audio: true
       output_leading_audio_min_ms: 5000
       output_speech_rms_threshold: 200

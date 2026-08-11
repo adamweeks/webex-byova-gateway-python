@@ -36,6 +36,7 @@ The sample includes:
 - A configuration-driven connector router
 - Local audio, AWS Lex, and Google CX Agent Studio connectors
 - Immediate 8 kHz mu-law BYOVA `CHUNK` output for Google CX Agent Studio,
+  either requested directly from CES or converted once from 24 kHz Linear16,
   with guarded suppression of anomalously long low-energy pre-roll and one
   ordered `FINAL` per completed normal or terminal turn
 - Direct delivery of autonomous CES no-input prompts to the active WxCC stream;
@@ -216,8 +217,9 @@ production without the controls described in the production guide.
 - **AWS Lex**: Connects to Amazon Lex V2 through the standard AWS SDK credential chain.
 - **Google CX Agent Studio**: Streams caller audio to Gemini Enterprise for Customer
   Experience through CES `BidiRunSession`. Caller speech starts an isolated response turn,
-  so an overlapping CES no-input prompt cannot consume the caller's post-input reply. See the
-  [GECX Setup Guide](docs/guides/byova-gecx-setup.md).
+  so an overlapping CES no-input prompt cannot consume the caller's post-input reply. The
+  connector can request 24 kHz Linear16 synthesis and perform the final anti-aliased 8 kHz
+  mu-law conversion locally. See the [GECX Setup Guide](docs/guides/byova-gecx-setup.md).
 
 Connectors implement `IVendorConnector` and are loaded from `config/config.yaml`. See the
 [Connector Guide](src/connectors/README.md) for the interface contract and extension pattern.

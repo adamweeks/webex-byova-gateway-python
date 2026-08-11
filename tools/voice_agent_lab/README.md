@@ -77,6 +77,18 @@ one place.
 The lab measures input commit to first returned audio, records transcripts and provider events,
 flags unusually long low-energy frames, and can download the returned PCM as a WAV file.
 
+For GECX output-quality comparisons, use the same text-only prompt with these profiles:
+
+| Profile | CES output request | Audio played by the lab |
+| --- | --- | --- |
+| Native PCM | 24 kHz Linear16 | Original 24 kHz Linear16 |
+| GECX direct mu-law (`wxcc`) | 8 kHz mu-law | GECX mu-law decoded to PCM for playback |
+| Connector mu-law from GECX PCM (`connector_mulaw`) | 24 kHz Linear16 | Anti-aliased 8 kHz conversion, locally mu-law encoded once, then decoded for playback |
+
+The third profile is a connector-path experiment. It preserves GECX's highest-quality output
+until the final conversion required by the WxCC media path and makes the resulting transport
+codec and byte count visible in the audio event metadata.
+
 ## Security
 
 - Keep the server on its default loopback address. A non-loopback bind requires
