@@ -608,6 +608,36 @@ class TestServerMessageMapping:
         assert len(responses[0]["audio_content"]) == 800
         assert responses[0]["audio_content"] != pcm_100ms_24khz[:800]
 
+    def test_linear16_provider_output_is_converted_before_autonomous_sink(
+        self, gecx_config
+    ):
+        gecx_config["output_audio_encoding"] = "LINEAR16"
+        gecx_config["output_sample_rate_hertz"] = 24000
+        with patch("src.connectors.gecx_connector.ces_v1.SessionServiceClient"):
+            high_quality_connector = GECXConnector(gecx_config)
+        delivered = []
+        session = GECXStreamingSession(
+            connector=high_quality_connector,
+            conversation_id="conv-hq-autonomous-output",
+            session_path="projects/p/locations/us/apps/a/sessions/s1",
+            deployment_path=high_quality_connector.deployment_path,
+            async_response_sink=lambda response: not delivered.append(response),
+        )
+        pcm_100ms_24khz = b"".join(
+            struct.pack(
+                "<h",
+                round(12000 * math.sin(2 * math.pi * 440 * index / 24000)),
+            )
+            for index in range(2400)
+        )
+
+        session._handle_server_message(self._server_output(pcm_100ms_24khz))
+
+        assert len(delivered) == 1
+        assert delivered[0]["response_type"] == "chunk"
+        assert len(delivered[0]["audio_content"]) == 800
+        assert delivered[0]["audio_content"] != pcm_100ms_24khz[:800]
+
     def test_first_audio_chunk_is_available_before_ces_turn_completion(
         self, connector, caplog
     ):
