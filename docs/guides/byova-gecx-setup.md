@@ -88,8 +88,9 @@ gecx_connector:
     language_code: "en-US"
     input_sample_rate_hertz: 8000
     input_audio_encoding: "MULAW"
-    output_sample_rate_hertz: 8000
-    output_audio_encoding: "MULAW"
+    # Recommended quality path. Use 8000/MULAW for direct CES mu-law.
+    output_sample_rate_hertz: 24000
+    output_audio_encoding: "LINEAR16"
     suppress_long_leading_audio: true
     output_leading_audio_min_ms: 5000
     output_speech_rms_threshold: 200
@@ -305,11 +306,11 @@ A terminal turn uses the same audio chunks, followed by one `FINAL` carrying
 `TRANSFER_TO_AGENT` or `SESSION_END`. The initial greeting uses the same
 `CHUNK`/`FINAL` pipeline.
 
-The current CHUNK path intentionally supports only 8 kHz mu-law output.
-`output_audio_encoding` must remain `MULAW` and
-`output_sample_rate_hertz` must remain `8000`; unsupported combinations fail
-configuration early. Broader output-format support requires explicit
-conversion and validation.
+The WxCC CHUNK path intentionally remains 8 kHz mu-law. The provider output can
+be `LINEAR16` at `24000` Hz, which the connector anti-alias filters, downsamples,
+and mu-law encodes once, or `MULAW` at `8000` Hz for direct CES mu-law. The
+24 kHz Linear16 path is recommended when CES direct mu-law sounds quiet or
+degraded. Unsupported provider-output pairs fail configuration early.
 
 Gateway `START_OF_INPUT` discards already-buffered autonomous prompt output and
 isolates CES output until CES recognizes the caller audio. This prevents the
@@ -428,8 +429,8 @@ window for an `EndSession` that follows the final TTS frames.
 | `initial_message` | No | Text sent when the CES stream opens (default: `Hello`) |
 | `enable_partial_responses` | No | Request CES text streaming for logs, terminal-cue detection, and text-only fallback |
 | `barge_in_enabled` | No | Allow interruption of autonomous/no-input prompt playback (default: `false`; greeting and caller-triggered replies always remain non-bargeable) |
-| `output_sample_rate_hertz` | No | Must be `8000` for the current raw CHUNK path |
-| `output_audio_encoding` | No | Must be `MULAW` for the current raw CHUNK path |
+| `output_sample_rate_hertz` | No | CES output rate: `24000` with `LINEAR16` (recommended) or `8000` with `MULAW` (default) |
+| `output_audio_encoding` | No | CES output codec: `LINEAR16` for connector-side conversion or `MULAW` for direct CES output |
 | `suppress_long_leading_audio` | No | Guard anomalously long low-energy CES output before prompt speech (default: `true`) |
 | `output_leading_audio_min_ms` | No | Minimum first-frame duration that can activate the guard (default: `5000`) |
 | `output_speech_rms_threshold` | No | 16-bit linear RMS threshold used to identify speech in decoded mu-law frames (default: `200`) |

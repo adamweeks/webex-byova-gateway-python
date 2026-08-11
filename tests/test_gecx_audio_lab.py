@@ -3,13 +3,17 @@
 import base64
 import io
 import json
+import math
+import struct
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from src.utils.telephony_audio import Linear16Resampler
 from tools.gecx_audio_lab.audio import (
     AUDIO_PROFILES,
+    OutputAudioConverter,
     browser_output_audio,
     ces_input_audio,
     linear16_to_mulaw,
@@ -58,13 +62,76 @@ def test_mulaw_round_trip_preserves_voice_shape() -> None:
 def test_audio_profiles_convert_and_generate_expected_duration() -> None:
     native = AUDIO_PROFILES["native"]
     wxcc = AUDIO_PROFILES["wxcc"]
+    connector_mulaw = AUDIO_PROFILES["connector_mulaw"]
     pcm_20ms_8khz = b"\x00\x00" * 160
 
     assert ces_input_audio(native, pcm_20ms_8khz) == pcm_20ms_8khz
     assert len(ces_input_audio(wxcc, pcm_20ms_8khz)) == 160
     assert len(browser_output_audio(wxcc, b"\xff" * 160)) == 320
+    assert wxcc.public_dict()["label"] == "GECX direct mu-law"
+    assert wxcc.public_dict()["outputEncoding"] == "MULAW"
+    assert wxcc.public_dict()["outputSampleRateHertz"] == 8000
+    assert wxcc.public_dict()["transportEncoding"] == "MULAW"
+    assert wxcc.public_dict()["transportSampleRateHertz"] == 8000
+    assert wxcc.public_dict()["transcoded"] is False
+    assert connector_mulaw.public_dict()["label"] == (
+        "Connector mu-law from GECX PCM"
+    )
+    assert connector_mulaw.public_dict()["outputEncoding"] == "LINEAR16"
+    assert connector_mulaw.public_dict()["outputSampleRateHertz"] == 24000
+    assert connector_mulaw.public_dict()["transportEncoding"] == "MULAW"
+    assert connector_mulaw.public_dict()["transportSampleRateHertz"] == 8000
+    assert connector_mulaw.public_dict()["transcoded"] is True
     assert sum(map(len, silence_chunks(native, 250))) == 8000
     assert sum(map(len, silence_chunks(wxcc, 250))) == 2000
+
+
+def test_connector_mulaw_profile_downsamples_and_encodes_once() -> None:
+    profile = AUDIO_PROFILES["connector_mulaw"]
+    pcm_100ms_24khz = b"".join(
+        struct.pack("<h", round(12000 * math.sin(2 * math.pi * 440 * index / 24000)))
+        for index in range(2400)
+    )
+
+    converted = OutputAudioConverter(profile).process(pcm_100ms_24khz)
+
+    assert converted.transport_encoding == "MULAW"
+    assert converted.sample_rate_hertz == 8000
+    assert len(converted.transport_audio) == 800
+    assert len(converted.pcm16) == 1600
+    assert pcm16_rms(converted.pcm16) > 7000
+
+
+def test_linear16_downsampler_preserves_state_across_provider_frames() -> None:
+    pcm = b"".join(
+        struct.pack("<h", round(10000 * math.sin(2 * math.pi * 1000 * index / 24000)))
+        for index in range(4800)
+    )
+    whole = Linear16Resampler(24000, 8000).process(pcm)
+    streaming = Linear16Resampler(24000, 8000)
+    split_at = 1554
+
+    split = streaming.process(pcm[:split_at]) + streaming.process(pcm[split_at:])
+
+    assert split == whole
+    assert len(whole) == 3200
+
+
+def test_linear16_downsampler_attenuates_out_of_band_audio() -> None:
+    def tone(frequency_hertz: int) -> bytes:
+        return b"".join(
+            struct.pack(
+                "<h",
+                round(12000 * math.sin(2 * math.pi * frequency_hertz * index / 24000)),
+            )
+            for index in range(4800)
+        )
+
+    in_band = Linear16Resampler(24000, 8000).process(tone(1000))[400:]
+    out_of_band = Linear16Resampler(24000, 8000).process(tone(4500))[400:]
+
+    assert pcm16_rms(in_band) > 7000
+    assert pcm16_rms(out_of_band) < 100
 
 
 def test_session_target_builds_draft_and_published_paths() -> None:
@@ -92,6 +159,22 @@ def test_session_target_builds_draft_and_published_paths() -> None:
     )
     assert published.public_dict()["deploymentMode"] == "published"
     assert published.runtime_endpoint == "ces.us.rep.googleapis.com"
+
+
+def test_gecx_target_exposes_both_mulaw_manual_test_profiles() -> None:
+    target = SessionTarget(
+        id="test",
+        label="Test",
+        project_id="project",
+        location="us",
+        application_id="app",
+    )
+
+    assert target.public_dict()["supportedProfileIds"] == [
+        "native",
+        "wxcc",
+        "connector_mulaw",
+    ]
 
 
 def test_settings_load_multiple_targets_without_exposing_credential_paths(

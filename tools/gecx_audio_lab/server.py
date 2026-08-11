@@ -26,7 +26,7 @@ from aiohttp import WSMsgType, web
 from .audio import (
     AUDIO_PROFILES,
     AudioProfile,
-    browser_output_audio,
+    OutputAudioConverter,
     ces_input_audio,
     pcm16_rms,
     silence_chunks,
@@ -112,7 +112,7 @@ class SessionTarget:
             "providerLabel": "Google CX Agent Studio",
             "interactionMode": "continuous",
             "interactionLabel": "CES bidirectional stream",
-            "supportedProfileIds": ["native", "wxcc"],
+            "supportedProfileIds": ["native", "wxcc", "connector_mulaw"],
             "defaultProfileId": "native",
             "projectId": self.project_id,
             "location": self.location,
@@ -318,6 +318,7 @@ class DirectGECXSession:
         self._first_audio_emitted = False
         self._audio_frame_index = 0
         self._received_server_message = False
+        self._output_audio_converter = OutputAudioConverter(profile)
 
     def start(self, initial_text: str = "") -> None:
         """Start the CES worker; initial text is sent after session config."""
@@ -613,7 +614,8 @@ class DirectGECXSession:
             self._emit("end_session", source="server_message")
 
     def _emit_audio(self, raw_audio: bytes) -> None:
-        pcm16 = browser_output_audio(self.profile, raw_audio)
+        converted = self._output_audio_converter.process(raw_audio)
+        pcm16 = converted.pcm16
         bytes_per_sample = 2 if self.profile.output_encoding == "LINEAR16" else 1
         encoded_duration_ms = (
             len(raw_audio)
@@ -636,10 +638,13 @@ class DirectGECXSession:
             "turnId": turn_id,
             "firstForTurn": first_for_turn,
             "commitToFirstAudioMs": round(latency_ms, 1) if latency_ms else None,
-            "sampleRateHertz": self.profile.output_sample_rate_hertz,
+            "sampleRateHertz": converted.sample_rate_hertz,
             "encoding": "LINEAR16",
             "rawEncoding": self.profile.output_encoding,
             "rawBytes": len(raw_audio),
+            "transportEncoding": converted.transport_encoding,
+            "transportSampleRateHertz": converted.sample_rate_hertz,
+            "transportBytes": len(converted.transport_audio),
             "pcmBytes": len(pcm16),
             "encodedDurationMs": round(encoded_duration_ms, 1),
             "rms": round(pcm16_rms(pcm16), 1),

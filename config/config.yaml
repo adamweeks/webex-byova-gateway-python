@@ -96,8 +96,9 @@ connectors:
   #     language_code: "en-US"
   #     input_sample_rate_hertz: 8000
   #     input_audio_encoding: "MULAW"
-  #     output_sample_rate_hertz: 8000
-  #     output_audio_encoding: "MULAW"
+  #     # Recommended quality path. Use 8000/MULAW for direct CES mu-law.
+  #     output_sample_rate_hertz: 24000
+  #     output_audio_encoding: "LINEAR16"
   #     # Suppress only anomalously long low-energy CES pre-roll while retaining
   #     # 100ms before detected prompt speech. Normal short frames pass through.
   #     suppress_long_leading_audio: true

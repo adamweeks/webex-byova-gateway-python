@@ -164,7 +164,8 @@ Experience) through the CES `BidiRunSession` API.
   suppressing an overlapping stale no-input prompt without dropping the reply
 - Can report current-turn CES recognition to the gateway so an opt-in,
   recognition-assisted policy shortens only the cancellable post-VAD grace
-- Streams 8 kHz mu-law CES output as BYOVA `CHUNK` responses
+- Streams WxCC-compatible 8 kHz mu-law as BYOVA `CHUNK` responses, either
+  directly from CES or converted once from CES 24 kHz Linear16 output
 - Pushes autonomous CES no-input prompts directly to the active WxCC stream and
   optionally enables barge-in for those open prompts (disabled by default)
 - Suppresses only a long low-energy prefix before detected prompt speech;
@@ -191,8 +192,10 @@ gecx_connector:
     # deployment_id: "YOUR_DEPLOYMENT_ID"
     input_sample_rate_hertz: 8000
     input_audio_encoding: "MULAW"
-    output_sample_rate_hertz: 8000
-    output_audio_encoding: "MULAW"
+    # Recommended quality path: request high-quality CES output, then perform
+    # the final anti-aliased 8 kHz mu-law conversion in the connector.
+    output_sample_rate_hertz: 24000
+    output_audio_encoding: "LINEAR16"
     suppress_long_leading_audio: true
     output_leading_audio_min_ms: 5000
     output_speech_rms_threshold: 200

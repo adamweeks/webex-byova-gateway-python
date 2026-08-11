@@ -50,6 +50,8 @@ except ImportError:
     Request = None
     client_options_lib = None
 
+from src.utils.telephony_audio import G711MulawOutputConverter
+
 from .i_vendor_connector import IVendorConnector
 
 # CES session IDs: [a-zA-Z0-9][a-zA-Z0-9-_]{4,62}
@@ -194,6 +196,10 @@ class GECXStreamingSession:
         )
         self._output_audio_gate_seen_bytes = 0
         self._output_audio_gate_buffer = bytearray()
+        self._output_audio_converter = G711MulawOutputConverter(
+            connector.output_audio_encoding,
+            connector.output_sample_rate_hertz,
+        )
         self._input_lock = threading.Lock()
         # Before speech starts this is bounded pre-roll. During active speech it
         # becomes the small unsent tail holdback; the rest is queued to CES as
@@ -1315,7 +1321,8 @@ class GECXStreamingSession:
             output = message.session_output
             has_terminal_output = bool(output.end_session)
 
-            audio_bytes = self._decode_output_audio(output.audio)
+            provider_audio_bytes = self._decode_output_audio(output.audio)
+            audio_bytes = self._output_audio_converter.process(provider_audio_bytes)
             if self._awaiting_input_ack and not has_terminal_output:
                 self._suppressed_pre_input_messages += 1
                 self._suppressed_pre_input_audio_bytes += len(audio_bytes)
@@ -1392,6 +1399,7 @@ class GECXStreamingSession:
 
     def _reset_output_audio_gate(self) -> None:
         """Reset guarded leading-audio inspection for the next CES turn."""
+        self._output_audio_converter.reset()
         self._output_audio_gate_state = (
             "inspect" if self.connector.suppress_long_leading_audio else "open"
         )
@@ -1455,10 +1463,31 @@ class GECXStreamingSession:
             "dropped_bytes=%d dropped_seconds=%.3f speech_rms_threshold=%d",
             self.conversation_id,
             dropped_bytes,
-            dropped_bytes / self.connector.output_sample_rate_hertz,
+            dropped_bytes / self.connector.transport_output_sample_rate_hertz,
             self.connector.output_speech_rms_threshold,
         )
         return playable_audio
+
+    def _begin_output_audio_gating(
+        self,
+        audio_bytes: bytes,
+        frame_rms: int,
+    ) -> bytes:
+        """Hold the tail of one anomalously long quiet leading frame."""
+        self._output_audio_gate_state = "gating"
+        keep_bytes = self.connector.output_audio_gate_tail_bytes
+        self._output_audio_gate_buffer.extend(audio_bytes[-keep_bytes:])
+        self.logger.warning(
+            "gecx_long_leading_audio_detected conversation_id=%s "
+            "frame_bytes=%d frame_seconds=%.3f frame_rms=%d "
+            "speech_rms_threshold=%d",
+            self.conversation_id,
+            len(audio_bytes),
+            len(audio_bytes) / self.connector.transport_output_sample_rate_hertz,
+            frame_rms,
+            self.connector.output_speech_rms_threshold,
+        )
+        return b""
 
     def _filter_leading_output_audio(self, audio_bytes: bytes) -> bytes:
         """Suppress only anomalously long low-energy audio before CES speech."""
@@ -1467,8 +1496,20 @@ class GECXStreamingSession:
 
         if self._output_audio_gate_state == "inspect":
             self._output_audio_gate_seen_bytes = len(audio_bytes)
-            speech_offset = self._find_output_speech_offset(audio_bytes)
             minimum_lead_bytes = self.connector.output_leading_audio_min_bytes
+            frame_rms = self._mulaw_rms(audio_bytes)
+
+            # PCM-to-mu-law conversion can turn a very quiet provider frame into
+            # a few isolated 20 ms windows above the speech threshold. Classify
+            # an anomalously long frame by its overall energy before searching
+            # those windows, or the quantization spikes can open the gate early.
+            if (
+                len(audio_bytes) >= minimum_lead_bytes
+                and frame_rms < self.connector.output_speech_rms_threshold
+            ):
+                return self._begin_output_audio_gating(audio_bytes, frame_rms)
+
+            speech_offset = self._find_output_speech_offset(audio_bytes)
 
             if speech_offset is not None:
                 if speech_offset >= minimum_lead_bytes:
@@ -1481,18 +1522,7 @@ class GECXStreamingSession:
                 self._output_audio_gate_state = "open"
                 return audio_bytes
 
-            self._output_audio_gate_state = "gating"
-            keep_bytes = self.connector.output_audio_gate_tail_bytes
-            self._output_audio_gate_buffer.extend(audio_bytes[-keep_bytes:])
-            self.logger.warning(
-                "gecx_long_leading_audio_detected conversation_id=%s "
-                "frame_bytes=%d frame_seconds=%.3f speech_rms_threshold=%d",
-                self.conversation_id,
-                len(audio_bytes),
-                len(audio_bytes) / self.connector.output_sample_rate_hertz,
-                self.connector.output_speech_rms_threshold,
-            )
-            return b""
+            return self._begin_output_audio_gating(audio_bytes, frame_rms)
 
         previous_tail = bytes(self._output_audio_gate_buffer)
         combined_audio = previous_tail + audio_bytes
@@ -1810,14 +1840,22 @@ class GECXConnector(IVendorConnector):
             .replace("AUDIO_ENCODING_", "")
             .replace("-", "_")
         )
-        if (
-            normalized_output_encoding not in {"MULAW", "ULAW", "LINEAR_16_MULAW"}
-            or self.output_sample_rate_hertz != 8000
-        ):
+        direct_mulaw_output = (
+            normalized_output_encoding in {"MULAW", "ULAW", "LINEAR_16_MULAW"}
+            and self.output_sample_rate_hertz == 8000
+        )
+        connector_mulaw_output = (
+            normalized_output_encoding in {"LINEAR16", "LINEAR_16"}
+            and self.output_sample_rate_hertz == 24000
+        )
+        if not direct_mulaw_output and not connector_mulaw_output:
             raise ValueError(
-                "GECX BYOVA CHUNK streaming currently requires "
-                "output_audio_encoding=MULAW and output_sample_rate_hertz=8000"
+                "GECX BYOVA CHUNK streaming requires either provider "
+                "MULAW/8000 output or provider LINEAR16/24000 output with "
+                "connector-side MULAW/8000 conversion"
             )
+        self.transport_output_audio_encoding = "MULAW"
+        self.transport_output_sample_rate_hertz = 8000
         self.suppress_long_leading_audio = bool(
             config.get("suppress_long_leading_audio", True)
         )
@@ -1839,13 +1877,19 @@ class GECXConnector(IVendorConnector):
             max(0, int(config.get("output_speech_preroll_ms", 100))),
         )
         self.output_speech_frame_bytes = (
-            self.output_sample_rate_hertz * self.output_speech_frame_ms // 1000
+            self.transport_output_sample_rate_hertz
+            * self.output_speech_frame_ms
+            // 1000
         )
         self.output_speech_preroll_bytes = (
-            self.output_sample_rate_hertz * self.output_speech_preroll_ms // 1000
+            self.transport_output_sample_rate_hertz
+            * self.output_speech_preroll_ms
+            // 1000
         )
         self.output_leading_audio_min_bytes = (
-            self.output_sample_rate_hertz * self.output_leading_audio_min_ms // 1000
+            self.transport_output_sample_rate_hertz
+            * self.output_leading_audio_min_ms
+            // 1000
         )
         self.output_audio_gate_tail_bytes = (
             self.output_speech_preroll_bytes

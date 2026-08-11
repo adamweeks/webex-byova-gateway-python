@@ -118,9 +118,10 @@ and end-to-end sandbox test paths.
 ### GECX / CX Agent Studio Connector
 
 The GECX connector streams WxCC caller audio to Google CX Agent Studio through the CES
-`BidiRunSession` API. CES 8 kHz mu-law output frames are forwarded immediately
-as raw BYOVA `CHUNK` responses, followed by exactly one normal or terminal
-`FINAL`.
+`BidiRunSession` API. It can request 24 kHz Linear16 output and perform the final
+anti-aliased 8 kHz mu-law conversion locally, or forward CES 8 kHz mu-law output
+directly. Both paths emit immediate BYOVA `CHUNK` responses followed by exactly
+one normal or terminal `FINAL`.
 
 ```yaml
 connectors:
@@ -135,8 +136,10 @@ connectors:
       language_code: "en-US"
       input_sample_rate_hertz: 8000
       input_audio_encoding: "MULAW"
-      output_sample_rate_hertz: 8000
-      output_audio_encoding: "MULAW"
+      # Recommended quality path. Use 8000/MULAW instead to compare direct CES
+      # mu-law output without connector-side conversion.
+      output_sample_rate_hertz: 24000
+      output_audio_encoding: "LINEAR16"
       suppress_long_leading_audio: true
       output_leading_audio_min_ms: 5000
       output_speech_rms_threshold: 200
@@ -164,9 +167,10 @@ connectors:
         - "My GECX Agent"
 ```
 
-GECX CHUNK output currently requires `output_sample_rate_hertz: 8000` and
-`output_audio_encoding: "MULAW"`. Unsupported output combinations fail during
-connector initialization; broader output formats are not silently mislabeled.
+GECX accepts two explicit provider-output pairs: `24000`/`LINEAR16` for the
+recommended connector-side conversion path, or `8000`/`MULAW` for direct CES
+mu-law. WxCC always receives 8 kHz mu-law; unsupported provider-output pairs
+fail during connector initialization rather than being silently mislabeled.
 The leading-audio guard activates only when the first CES frame is at least
 `output_leading_audio_min_ms` and contains no sustained speech. It then retains
 `output_speech_preroll_ms` before the first detected speech frames.
