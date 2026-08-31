@@ -995,7 +995,11 @@ class ConversationProcessor:
             self.logger.debug(
                 f"Converting connector response to gRPC format for {self.conversation_id}"
             )
-            self.logger.debug(f"Connector response: {connector_response}")
+            self.logger.debug(
+                "Connector response keys for %s: %s",
+                self.conversation_id,
+                sorted(str(key) for key in connector_response),
+            )
 
             va_response = VoiceVAResponse()
 
@@ -1170,6 +1174,16 @@ class ConversationProcessor:
                 output_event = OutputEvent()
                 output_event.event_type = OutputEvent.EventType.TRANSFER_TO_AGENT
                 output_event.name = "transfer_requested"
+                handoff_summary = self._handoff_summary(connector_response)
+                if handoff_summary:
+                    output_event.metadata.update({"summary": handoff_summary})
+                    va_response.session_summary.text = handoff_summary
+                    self.logger.info(
+                        "Forwarded handoff summary for conversation %s "
+                        "(summary_chars=%d)",
+                        self.conversation_id,
+                        len(handoff_summary),
+                    )
                 va_response.output_events.append(output_event)
                 self.logger.info(
                     f"Sent TRANSFER_TO_AGENT event to WxCC for conversation {self.conversation_id}"
@@ -1297,6 +1311,20 @@ class ConversationProcessor:
 
             self.logger.error(f"Traceback: {traceback.format_exc()}")
             return self._create_error_response(f"Response conversion error: {str(e)}")
+
+    @staticmethod
+    def _handoff_summary(
+        connector_response: Dict[str, Any],
+    ) -> Optional[str]:
+        """Return a non-empty allowlisted summary from canonical handoff data."""
+        handoff = connector_response.get("handoff")
+        if not isinstance(handoff, dict):
+            return None
+        raw_summary = handoff.get("summary")
+        if not isinstance(raw_summary, str):
+            return None
+        summary = raw_summary.strip()
+        return summary or None
 
     def _create_error_response(self, error_message: str) -> VoiceVAResponse:
         """Create an error response."""

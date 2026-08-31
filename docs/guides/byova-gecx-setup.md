@@ -357,6 +357,23 @@ Agent escalates ─► CES EndSession { metadata: {...} }
    `escalat`, `human`, `live agent`, or `handoff`. Optionally include a
    `reason` string.
 
+To give the receiving agent context, also pass an optional plain-text `summary`
+through the `end_session` system tool's `params` argument:
+
+```text
+end_session(
+  reason="caller requested a human agent",
+  session_escalated=true,
+  params={"summary": "Caller wants to change a delivery address; no change was made."}
+)
+```
+
+CX Agent Studio returns `params.summary` as `EndSession.metadata.summary`. The
+connector normalizes that value, and the gateway copies it to the single BYOVA
+`TRANSFER_TO_AGENT.metadata.summary` event and `session_summary`. If `summary`
+is absent, empty, or not text, the gateway omits both summary fields and still
+transfers the call normally. Other EndSession metadata is not forwarded.
+
 ### 2. Discover exactly what your agent sends
 
 The connector logs metadata key names on every session end without logging

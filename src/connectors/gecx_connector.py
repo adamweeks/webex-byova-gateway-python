@@ -1045,6 +1045,10 @@ class GECXStreamingSession:
         if decision.outcome == GECXTerminalOutcome.SILENT:
             return None
         if decision.outcome == GECXTerminalOutcome.TRANSFER:
+            end_session_metadata = decision.metadata.get("end_session", {})
+            handoff = self._handoff_from_end_session_metadata(
+                end_session_metadata if isinstance(end_session_metadata, dict) else {}
+            )
             return self.connector.create_response(
                 conversation_id=self.conversation_id,
                 message_type="transfer",
@@ -1055,6 +1059,7 @@ class GECXStreamingSession:
                 ),
                 barge_in_enabled=False,
                 response_type="final",
+                **({"handoff": handoff} if handoff else {}),
             )
         return self.connector.create_response(
             conversation_id=self.conversation_id,
@@ -1638,6 +1643,19 @@ class GECXStreamingSession:
             return dict(raw)
         except (TypeError, ValueError):
             return {}
+
+    @staticmethod
+    def _handoff_from_end_session_metadata(
+        metadata: Dict[str, Any],
+    ) -> Dict[str, str]:
+        """Normalize the allowlisted GECX handoff fields for the gateway."""
+        raw_summary = metadata.get("summary")
+        if not isinstance(raw_summary, str):
+            return {}
+        summary = raw_summary.strip()
+        if not summary:
+            return {}
+        return {"summary": summary}
 
     def _detect_transfer(self, metadata: Dict[str, Any]) -> Tuple[bool, str]:
         """Decide whether an EndSession represents a human handoff.

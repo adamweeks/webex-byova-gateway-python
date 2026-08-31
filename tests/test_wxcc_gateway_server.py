@@ -5,6 +5,7 @@ This module tests the gateway server's ability to handle both single responses
 and generator responses from connectors, as well as proper audio input processing.
 """
 
+import logging
 import threading
 from unittest.mock import MagicMock, patch
 
@@ -905,6 +906,68 @@ class TestConversationProcessor:
         event = response.output_events[0]
         assert event.event_type == 2  # TRANSFER_TO_AGENT
         assert event.name == "transfer_requested"
+        assert dict(event.metadata) == {}
+        assert not response.HasField("session_summary")
+
+    def test_transfer_handoff_summary_is_forwarded_to_wxcc(self, processor):
+        response = processor._convert_connector_response_to_grpc(
+            {
+                "message_type": "transfer",
+                "text": "Transferring you to a human agent.",
+                "audio_content": b"",
+                "barge_in_enabled": False,
+                "response_type": "final",
+                "handoff": {
+                    "summary": "Caller needs help changing a delivery address."
+                },
+            }
+        )
+
+        assert response is not None
+        assert len(response.output_events) == 1
+        event = response.output_events[0]
+        assert event.event_type == 2  # TRANSFER_TO_AGENT
+        assert event.name == "transfer_requested"
+        assert event.metadata["summary"] == (
+            "Caller needs help changing a delivery address."
+        )
+        assert response.session_summary.text == (
+            "Caller needs help changing a delivery address."
+        )
+
+    @pytest.mark.parametrize("summary", [None, "", "   ", False, {"text": "no"}])
+    def test_transfer_without_valid_handoff_summary_remains_supported(
+        self, processor, summary
+    ):
+        response = processor._convert_connector_response_to_grpc(
+            {
+                "message_type": "transfer",
+                "text": "Transferring you to a human agent.",
+                "audio_content": b"",
+                "response_type": "final",
+                "handoff": {"summary": summary},
+            }
+        )
+
+        assert response is not None
+        assert len(response.output_events) == 1
+        assert dict(response.output_events[0].metadata) == {}
+        assert not response.HasField("session_summary")
+
+    def test_handoff_summary_is_not_written_to_gateway_logs(self, processor, caplog):
+        caplog.set_level(logging.DEBUG)
+
+        processor._convert_connector_response_to_grpc(
+            {
+                "message_type": "transfer",
+                "text": "",
+                "audio_content": b"",
+                "response_type": "final",
+                "handoff": {"summary": "Private caller handoff details."},
+            }
+        )
+
+        assert "Private caller handoff details." not in caplog.text
 
     def test_process_audio_input_with_output_events(self, processor, mock_router, mock_audio_input):
         """Test processing audio input with custom output events from connector."""
