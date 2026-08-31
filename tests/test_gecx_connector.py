@@ -1101,6 +1101,43 @@ class TestServerMessageMapping:
         responses = self._end_session(connector, {"session_escalated": True})
         assert responses[0]["message_type"] == "transfer"
 
+    def test_end_session_with_summary_normalizes_handoff(self, connector):
+        responses = self._end_session(
+            connector,
+            {
+                "session_escalated": True,
+                "summary": "  Caller needs help changing a delivery address.  ",
+            },
+        )
+
+        assert responses == [
+            {
+                "audio_content": b"",
+                "text": "Transferring you to an agent.",
+                "conversation_id": "conv-1",
+                "agent_id": "Unknown",
+                "message_type": "transfer",
+                "barge_in_enabled": False,
+                "output_events": [],
+                "response_type": "final",
+                "handoff": {
+                    "summary": "Caller needs help changing a delivery address."
+                },
+            }
+        ]
+
+    @pytest.mark.parametrize("summary", [None, "", "   ", True, ["not", "text"]])
+    def test_end_session_without_valid_summary_preserves_transfer(
+        self, connector, summary
+    ):
+        responses = self._end_session(
+            connector,
+            {"session_escalated": True, "summary": summary},
+        )
+
+        assert responses[0]["message_type"] == "transfer"
+        assert "handoff" not in responses[0]
+
     def test_session_output_end_session_uses_nested_metadata(self, connector):
         session = GECXStreamingSession(
             connector=connector,
@@ -1167,12 +1204,14 @@ class TestServerMessageMapping:
                 "session_escalated": True,
                 "customer_email": "guest@example.com",
                 "reason": "private routing identifier",
+                "summary": "Caller supplied private account information.",
             },
         )
 
         assert "customer_email" in caplog.text
         assert "guest@example.com" not in caplog.text
         assert "private routing identifier" not in caplog.text
+        assert "Caller supplied private account information." not in caplog.text
 
     def test_end_session_with_escalation_key_name_emits_transfer(self, connector):
         # Key-name keyword match catches naming variants generically.

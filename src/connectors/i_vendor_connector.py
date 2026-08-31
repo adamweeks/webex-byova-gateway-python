@@ -446,7 +446,8 @@ class IVendorConnector(ABC):
             audio_content: Audio bytes to send to the client
             barge_in_enabled: Whether barge-in is enabled for this response
             output_events: List of output events to include
-            **additional_params: Additional parameters to include in the response
+            **additional_params: Additional canonical parameters to include in the
+                response. A transfer may include ``handoff.summary`` for WxCC.
 
         Returns:
             Standardized response dictionary with common fields
