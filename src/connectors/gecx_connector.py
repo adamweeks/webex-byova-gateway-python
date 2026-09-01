@@ -50,6 +50,7 @@ except ImportError:
     Request = None
     client_options_lib = None
 
+from src.utils.handoff import normalize_routing_hint
 from src.utils.telephony_audio import G711MulawOutputConverter
 
 from .i_vendor_connector import IVendorConnector
@@ -1649,13 +1650,17 @@ class GECXStreamingSession:
         metadata: Dict[str, Any],
     ) -> Dict[str, str]:
         """Normalize the allowlisted GECX handoff fields for the gateway."""
+        handoff: Dict[str, str] = {}
         raw_summary = metadata.get("summary")
-        if not isinstance(raw_summary, str):
-            return {}
-        summary = raw_summary.strip()
-        if not summary:
-            return {}
-        return {"summary": summary}
+        if isinstance(raw_summary, str):
+            summary = raw_summary.strip()
+            if summary:
+                handoff["summary"] = summary
+
+        routing_hint = normalize_routing_hint(metadata.get("routing_hint"))
+        if routing_hint:
+            handoff["routing_hint"] = routing_hint
+        return handoff
 
     def _detect_transfer(self, metadata: Dict[str, Any]) -> Tuple[bool, str]:
         """Decide whether an EndSession represents a human handoff.
