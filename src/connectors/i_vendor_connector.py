@@ -449,7 +449,8 @@ class IVendorConnector(ABC):
             **additional_params: Additional canonical parameters to include in the
                 response. A transfer may include ``handoff.summary`` and a
                 symbolic ``handoff.routing_hint`` for WxCC. Do not include raw
-                provider metadata or customer queue IDs.
+                provider metadata or customer queue IDs; use
+                ``src.utils.handoff.normalize_handoff`` to build this object.
 
         Returns:
             Standardized response dictionary with common fields

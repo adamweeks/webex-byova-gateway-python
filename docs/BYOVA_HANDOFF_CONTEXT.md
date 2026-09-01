@@ -76,6 +76,32 @@ They should extract only the approved fields and normalize them into this shape.
 agent sends the business classification; the customer owns the mapping from that classification
 to WxCC queue IDs.
 
+### Connector integration contract
+
+This is a gateway contract, not a GECX feature. Any connector can extract equivalent terminal
+data from its provider and attach the canonical handoff object to its `transfer` response:
+
+```python
+from src.utils.handoff import normalize_handoff
+
+handoff = normalize_handoff(
+    {
+        "summary": provider_summary,
+        "routing_hint": provider_business_classification,
+    }
+)
+return self.create_response(
+    conversation_id=conversation_id,
+    message_type="transfer",
+    handoff=handoff,
+)
+```
+
+`normalize_handoff()` is the shared gateway allowlist. It discards provider-specific fields,
+invalid values, and raw queue IDs; connectors must never pass the full provider terminal
+payload. GECX uses this helper for `EndSession.metadata`, but no GECX dependency exists in the
+gateway contract.
+
 ## BYOVA Transfer Response
 
 The gateway should create one final `VoiceVAResponse` containing one
