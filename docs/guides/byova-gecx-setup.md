@@ -136,6 +136,9 @@ Open `http://localhost:8080` and confirm **My GECX Agent** appears in the dashbo
 2. Use schema `5397013b-7920-4ffc-807c-e8a3e0a18f43`.
 3. In your WxCC flow, add the Virtual Agent / BYOVA element.
 4. Select agent name **My GECX Agent** (must match `agents` in config).
+5. For human escalation, follow the provider-neutral [BYOVA Handoff Context guide](../BYOVA_HANDOFF_CONTEXT.md)
+   to map the optional summary and routing hint into Flow Designer. GECX `EndSession` metadata
+   is one source for those fields; the Flow Designer mapping is the same for every connector.
 
 ## Deploying to Google Cloud Run
 

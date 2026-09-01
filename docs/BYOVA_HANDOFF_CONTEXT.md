@@ -161,7 +161,7 @@ BYOVARoutingHint = {{BYOVA_Virtual_Agent.MetaData.routing_hint}}
 ```
 
 The Virtual Agent activity name is flow-specific; replace `BYOVA_Virtual_Agent` with the
-actual activity name. Configure the custom variable as:
+actual activity name. Configure the summary variable as:
 
 | Setting | Value |
 | --- | --- |
@@ -172,6 +172,19 @@ actual activity name. Configure the custom variable as:
 
 These settings live in the flow's **Global flow properties**. They do not require a custom
 Agent Desktop JSON layout.
+
+Configure `BYOVARoutingHint` separately in the same location:
+
+| Setting | Value |
+| --- | --- |
+| Type | String |
+| Default value | Empty |
+| Agent viewable | Disabled |
+| Agent editable | Disabled |
+
+`BYOVARoutingHint` is a routing-only value. Do not add it to an Agent Desktop surface or use
+it as a customer-facing label. The flow owns the mapping from its symbolic value to an approved
+queue.
 
 ### 1. Create the agent-viewable variable
 
@@ -206,20 +219,34 @@ Keep the human-routing path independent of the optional value:
 - Do not invent a fallback summary. Leave the agent-viewable variable empty when no summary
   was supplied.
 
-### Route with an approved customer-owned queue map
+### 3. Route with an approved customer-owned queue map
 
-Use a **Case** activity on `BYOVARoutingHint` after the Virtual Agent V2 **Escalated** branch.
-Each case value must be an approved symbolic classification, such as
-`delivery_address_specialist` or `billing_specialist`, and each branch should lead to the
-customer's approved WxCC queue for that classification. Do not ask the virtual agent to send a
-WxCC queue ID and do not use a provider-supplied ID directly as a queue target.
+On the Virtual Agent V2 **Escalated** branch, add a second **Set Variable** activity after the
+summary assignment. Select `BYOVARoutingHint`, choose **Set value**, and enter the routing-hint
+expression shown above. Connect its success path to a **Case** activity whose input is
+`BYOVARoutingHint`.
+
+Configure the Case branches only with classifications approved by the customer. For example:
+
+| Case value | Flow action |
+| --- | --- |
+| `billing_specialist` | Queue Contact to the approved billing queue |
+| `delivery_address_specialist` | Queue Contact to the approved delivery-address queue |
+| Default | Queue Contact to the normal fallback human queue |
+
+The labels above are examples, not gateway configuration. Do not ask the virtual agent to send
+a WxCC queue ID and do not use a provider-supplied ID directly as a queue target. The customer
+can add, remove, or remap classifications in Flow Designer without changing the provider or
+gateway.
 
 Always connect the Case activity's **Default** branch to the normal fallback human queue. This
 default handles a missing, empty, malformed, or unknown hint so the human transfer still
-succeeds. The customer can add, remove, or remap approved classifications in Flow Designer
-without changing the provider or gateway.
+succeeds. If a missing nested `routing_hint` key produces an **Undefined Error** in the Set
+Variable activity, connect that error path to the same fallback human queue, or guard the
+assignment with an equivalent condition. Do not send the contact to a Virtual Agent failure
+branch only because the optional routing hint is absent.
 
-### 3. Select the Agent Desktop surfaces
+### 4. Select the Agent Desktop surfaces
 
 Open **Variable definition > Desktop viewability & order**. Add
 `BYOVAHandoffSummary` to both **Incoming popover** and **Interaction control pane and
@@ -230,6 +257,14 @@ configuration has been validated.
 
 The transfer must continue when the provider does not supply a summary or routing hint; absent
 handoff data is not a routing failure.
+
+### 5. Validate before publishing
+
+Before publishing the flow, use synthetic handoff values to verify each approved Case branch,
+the Default branch for an unknown hint, and the fallback path for a missing hint. Confirm that
+only `BYOVAHandoffSummary` appears in the incoming popover and interaction control pane, and
+that both missing-field error paths still reach a human queue. Do not add real queue IDs,
+customer data, or provider diagnostics to the test values.
 
 ## Validated Agent Desktop Behavior
 
