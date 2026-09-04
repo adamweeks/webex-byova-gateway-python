@@ -1651,6 +1651,10 @@ class GECXStreamingSession:
         """Normalize the allowlisted GECX handoff fields for the gateway."""
         raw_summary = metadata.get("summary")
         if not isinstance(raw_summary, str):
+            params = metadata.get("params")
+            if isinstance(params, dict):
+                raw_summary = params.get("summary")
+        if not isinstance(raw_summary, str):
             return {}
         summary = raw_summary.strip()
         if not summary:

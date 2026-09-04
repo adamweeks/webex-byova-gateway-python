@@ -1101,13 +1101,34 @@ class TestServerMessageMapping:
         responses = self._end_session(connector, {"session_escalated": True})
         assert responses[0]["message_type"] == "transfer"
 
-    def test_end_session_with_summary_normalizes_handoff(self, connector):
+    @pytest.mark.parametrize(
+        ("metadata", "expected_summary"),
+        [
+            (
+                {
+                    "session_escalated": True,
+                    "summary": "  Caller needs help changing a delivery address.  ",
+                },
+                "Caller needs help changing a delivery address.",
+            ),
+            (
+                {
+                    "session_escalated": True,
+                    "params": {
+                        "summary": "  Caller needs help changing a delivery address.  ",
+                        "provider_queue_id": "do-not-forward",
+                    },
+                },
+                "Caller needs help changing a delivery address.",
+            ),
+        ],
+    )
+    def test_end_session_with_summary_normalizes_handoff(
+        self, connector, metadata, expected_summary
+    ):
         responses = self._end_session(
             connector,
-            {
-                "session_escalated": True,
-                "summary": "  Caller needs help changing a delivery address.  ",
-            },
+            metadata,
         )
 
         assert responses == [
@@ -1121,19 +1142,31 @@ class TestServerMessageMapping:
                 "output_events": [],
                 "response_type": "final",
                 "handoff": {
-                    "summary": "Caller needs help changing a delivery address."
+                    "summary": expected_summary
                 },
             }
         ]
 
-    @pytest.mark.parametrize("summary", [None, "", "   ", True, ["not", "text"]])
+    @pytest.mark.parametrize(
+        "metadata",
+        [
+            {"session_escalated": True, "summary": None},
+            {"session_escalated": True, "summary": ""},
+            {"session_escalated": True, "summary": "   "},
+            {"session_escalated": True, "summary": True},
+            {"session_escalated": True, "summary": ["not", "text"]},
+            {"session_escalated": True, "params": None},
+            {"session_escalated": True, "params": {"summary": None}},
+            {"session_escalated": True, "params": {"summary": ""}},
+            {"session_escalated": True, "params": {"summary": "   "}},
+            {"session_escalated": True, "params": {"summary": True}},
+            {"session_escalated": True, "params": {"summary": ["not", "text"]}},
+        ],
+    )
     def test_end_session_without_valid_summary_preserves_transfer(
-        self, connector, summary
+        self, connector, metadata
     ):
-        responses = self._end_session(
-            connector,
-            {"session_escalated": True, "summary": summary},
-        )
+        responses = self._end_session(connector, metadata)
 
         assert responses[0]["message_type"] == "transfer"
         assert "handoff" not in responses[0]
