@@ -17,6 +17,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -1652,7 +1653,7 @@ class GECXStreamingSession:
         raw_summary = metadata.get("summary")
         if not isinstance(raw_summary, str):
             params = metadata.get("params")
-            if isinstance(params, dict):
+            if isinstance(params, Mapping):
                 raw_summary = params.get("summary")
         if not isinstance(raw_summary, str):
             return {}
@@ -1660,6 +1661,33 @@ class GECXStreamingSession:
         if not summary:
             return {}
         return {"summary": summary}
+
+    @staticmethod
+    def _handoff_summary_diagnostic(metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Describe summary-field shapes without retaining or logging their values."""
+        top_level_present = "summary" in metadata
+        top_level_summary = metadata.get("summary")
+        params_present = "params" in metadata
+        params = metadata.get("params")
+        params_is_mapping = isinstance(params, Mapping)
+        params_summary_present = params_is_mapping and "summary" in params
+        params_summary = params.get("summary") if params_is_mapping else None
+
+        return {
+            "top_level_present": top_level_present,
+            "top_level_type": type(top_level_summary).__name__,
+            "top_level_chars": len(top_level_summary)
+            if isinstance(top_level_summary, str)
+            else 0,
+            "params_present": params_present,
+            "params_type": type(params).__name__,
+            "params_is_mapping": params_is_mapping,
+            "params_summary_present": params_summary_present,
+            "params_summary_type": type(params_summary).__name__,
+            "params_summary_chars": len(params_summary)
+            if isinstance(params_summary, str)
+            else 0,
+        }
 
     def _detect_transfer(self, metadata: Dict[str, Any]) -> Tuple[bool, str]:
         """Decide whether an EndSession represents a human handoff.
@@ -1738,6 +1766,24 @@ class GECXStreamingSession:
             conversation_id,
             sorted(metadata),
         )
+        if self.connector.log_handoff_summary_diagnostics:
+            diagnostic = self._handoff_summary_diagnostic(metadata)
+            self.logger.info(
+                "[GECX] Handoff summary diagnostic: "
+                "top_level_present=%s top_level_type=%s top_level_chars=%d "
+                "params_present=%s params_type=%s params_is_mapping=%s "
+                "params_summary_present=%s params_summary_type=%s "
+                "params_summary_chars=%d",
+                diagnostic["top_level_present"],
+                diagnostic["top_level_type"],
+                diagnostic["top_level_chars"],
+                diagnostic["params_present"],
+                diagnostic["params_type"],
+                diagnostic["params_is_mapping"],
+                diagnostic["params_summary_present"],
+                diagnostic["params_summary_type"],
+                diagnostic["params_summary_chars"],
+            )
         if self.connector.log_raw_terminal_metadata_debug:
             self.logger.debug(
                 "[%s] [GECX] Raw EndSession metadata: %s",
@@ -1958,6 +2004,9 @@ class GECXConnector(IVendorConnector):
         )
         self.log_raw_terminal_metadata_debug = bool(
             config.get("log_raw_terminal_metadata_debug", False)
+        )
+        self.log_handoff_summary_diagnostics = bool(
+            config.get("log_handoff_summary_diagnostics", False)
         )
         self.agents = config.get("agents", ["GECX Agent"])
 
