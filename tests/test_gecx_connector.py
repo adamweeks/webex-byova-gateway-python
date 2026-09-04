@@ -1102,30 +1102,22 @@ class TestServerMessageMapping:
         assert responses[0]["message_type"] == "transfer"
 
     @pytest.mark.parametrize(
-        ("metadata", "expected_summary"),
+        "metadata",
         [
-            (
-                {
-                    "session_escalated": True,
+            {
+                "session_escalated": True,
+                "summary": "  Caller needs help changing a delivery address.  ",
+            },
+            {
+                "session_escalated": True,
+                "params": {
                     "summary": "  Caller needs help changing a delivery address.  ",
+                    "provider_queue_id": "do-not-forward",
                 },
-                "Caller needs help changing a delivery address.",
-            ),
-            (
-                {
-                    "session_escalated": True,
-                    "params": {
-                        "summary": "  Caller needs help changing a delivery address.  ",
-                        "provider_queue_id": "do-not-forward",
-                    },
-                },
-                "Caller needs help changing a delivery address.",
-            ),
+            },
         ],
     )
-    def test_end_session_with_summary_normalizes_handoff(
-        self, connector, metadata, expected_summary
-    ):
+    def test_end_session_with_summary_normalizes_handoff(self, connector, metadata):
         responses = self._end_session(
             connector,
             metadata,
@@ -1142,7 +1134,7 @@ class TestServerMessageMapping:
                 "output_events": [],
                 "response_type": "final",
                 "handoff": {
-                    "summary": expected_summary
+                    "summary": "Caller needs help changing a delivery address."
                 },
             }
         ]

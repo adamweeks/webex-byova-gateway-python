@@ -368,13 +368,13 @@ end_session(
 )
 ```
 
-CX Agent Studio returns that value inside the `params` object in the terminal
-metadata (`EndSession.metadata.params.summary`). The connector normalizes that
-value, and also accepts the legacy top-level `EndSession.metadata.summary` shape
-for compatibility. The gateway copies the allowlisted summary to the single
-BYOVA `TRANSFER_TO_AGENT.metadata.summary` event and `session_summary`. If
-`summary` is absent, empty, or not text, the gateway omits both summary fields
-and still transfers the call normally. Other EndSession metadata, including
+CX Agent Studio places that value in `params` in the terminal metadata
+(`EndSession.metadata.params.summary`). The connector accepts this nested shape
+and the legacy top-level `EndSession.metadata.summary` shape for compatibility.
+The gateway copies the allowlisted summary to the single BYOVA
+`TRANSFER_TO_AGENT.metadata.summary` event and `session_summary`. If `summary`
+is absent, empty, or not text, the gateway omits both summary fields and still
+transfers the call normally. Other EndSession metadata, including
 provider-specific values in `params`, is not forwarded.
 
 ### 2. Discover exactly what your agent sends
