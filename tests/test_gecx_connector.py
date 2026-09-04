@@ -10,6 +10,7 @@ import os
 import re
 import struct
 import threading
+from collections import UserDict
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -1138,6 +1139,51 @@ class TestServerMessageMapping:
                 },
             }
         ]
+
+    def test_end_session_with_mapping_summary_normalizes_handoff(self, connector):
+        responses = self._end_session(
+            connector,
+            {
+                "session_escalated": True,
+                "params": UserDict(
+                    summary="  Caller needs help changing a delivery address.  "
+                ),
+            },
+        )
+
+        assert responses[0]["handoff"] == {
+            "summary": "Caller needs help changing a delivery address."
+        }
+
+    def test_handoff_summary_diagnostic_logs_shape_without_summary_value(
+        self, connector, caplog
+    ):
+        summary = "Caller needs a private account change."
+        connector.log_handoff_summary_diagnostics = True
+
+        with caplog.at_level(logging.INFO, logger="src.connectors.gecx_connector"):
+            self._end_session(
+                connector,
+                {
+                    "session_escalated": True,
+                    "params": UserDict(summary=summary),
+                },
+            )
+
+        diagnostics = [
+            record.getMessage()
+            for record in caplog.records
+            if "Handoff summary diagnostic" in record.getMessage()
+        ]
+
+        assert diagnostics == [
+            "[GECX] Handoff summary diagnostic: "
+            "top_level_present=False top_level_type=NoneType top_level_chars=0 "
+            "params_present=True params_type=UserDict params_is_mapping=True "
+            "params_summary_present=True params_summary_type=str "
+            f"params_summary_chars={len(summary)}"
+        ]
+        assert summary not in caplog.text
 
     @pytest.mark.parametrize(
         "metadata",

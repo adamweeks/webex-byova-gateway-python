@@ -401,6 +401,12 @@ For short-lived debugging only, `log_raw_terminal_metadata_debug: true` exposes
 the full metadata at DEBUG level. Leave it disabled when metadata may contain
 customer data or sensitive identifiers.
 
+To diagnose handoff summaries without logging their text, temporarily set
+`log_handoff_summary_diagnostics: true`. The connector logs only whether the
+top-level and nested `params.summary` fields are present, their runtime types,
+and string lengths. It never logs the summary value; disable the setting after
+the test call.
+
 When detected, you'll see:
 
 ```
@@ -470,6 +476,7 @@ window for an `EndSession` that follows the final TTS frames.
 | `transfer_reason_keywords` | No | Substrings that, if found in a reason/type metadata value, trigger a transfer |
 | `transfer_reason_metadata_keys` | No | Which metadata keys are scanned for `transfer_reason_keywords` |
 | `log_raw_terminal_metadata_debug` | No | Log raw EndSession metadata at DEBUG level; defaults to `false` because values may be sensitive |
+| `log_handoff_summary_diagnostics` | No | Log only summary field presence, type, and length; defaults to `false` and never logs summary text |
 
 ## Authentication options
 
