@@ -72,6 +72,19 @@ def test_empty_wxcc_protobuf_map_entry_shape_is_normalized():
     assert parsed.payload.voice_va_input_type.event_input.parameters == {}
 
 
+def test_null_wxcc_optional_map_fields_are_normalized():
+    value = session_start()
+    value["metadata"] = None
+    value["payload"]["additional_info"] = None
+    value["payload"]["voice_va_input_type"]["event_input"]["parameters"] = None
+
+    parsed = parse_incoming_envelope(value)
+
+    assert parsed.metadata == {}
+    assert parsed.payload.additional_info == {}
+    assert parsed.payload.voice_va_input_type.event_input.parameters == {}
+
+
 @pytest.mark.parametrize(
     "entries",
     [

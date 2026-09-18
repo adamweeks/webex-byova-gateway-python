@@ -35,7 +35,9 @@ def _normalize_map_entries(value: Any) -> Any:
     keep the rest of the model strict.
     """
 
-    if isinstance(value, dict) or value is None:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
         return value
     if not isinstance(value, list):
         return value
