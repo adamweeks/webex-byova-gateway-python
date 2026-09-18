@@ -26,6 +26,33 @@ NonEmptyString = Annotated[str, StringConstraints(min_length=1, max_length=512)]
 MAX_AUDIO_BYTES = 65_536
 
 
+def _normalize_map_entries(value: Any) -> Any:
+    """Normalize protobuf-style JSON map entries into an ordinary mapping.
+
+    WxCC currently emits protobuf map fields as repeated ``key``/``value``
+    entries, including ``[]`` for an empty map. The published WebSocket schema
+    models the same fields as JSON objects, so accept either representation and
+    keep the rest of the model strict.
+    """
+
+    if isinstance(value, dict) or value is None:
+        return value
+    if not isinstance(value, list):
+        return value
+
+    normalized: dict[str, Any] = {}
+    for entry in value:
+        if not isinstance(entry, dict) or set(entry) != {"key", "value"}:
+            raise ValueError("map entries must contain only key and value")
+        key = entry["key"]
+        if not isinstance(key, str):
+            raise ValueError("map entry keys must be strings")
+        if key in normalized:
+            raise ValueError("map entry keys must be unique")
+        normalized[key] = entry["value"]
+    return normalized
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -94,6 +121,11 @@ class EventInput(StrictModel):
     name: str | None = Field(default=None, max_length=256)
     parameters: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("parameters", mode="before")
+    @classmethod
+    def normalize_parameters(cls, value: Any) -> Any:
+        return _normalize_map_entries(value)
+
 
 class VoiceInputWrapper(StrictModel):
     audio_input: VoiceInput
@@ -119,6 +151,11 @@ class VoiceVARequest(StrictModel):
     voice_va_input_type: VoiceVAInput
     additional_info: dict[str, str] = Field(default_factory=dict)
 
+    @field_validator("additional_info", mode="before")
+    @classmethod
+    def normalize_additional_info(cls, value: Any) -> Any:
+        return _normalize_map_entries(value)
+
 
 class VoiceVARequestEnvelope(StrictModel):
     type: Literal["VOICE_VA_REQUEST"]
@@ -127,6 +164,11 @@ class VoiceVARequestEnvelope(StrictModel):
     conversation_id: NonEmptyString
     metadata: dict[str, Any] = Field(default_factory=dict)
     payload: VoiceVARequest
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def normalize_metadata(cls, value: Any) -> Any:
+        return _normalize_map_entries(value)
 
     @model_validator(mode="after")
     def identifiers_match(self) -> VoiceVARequestEnvelope:
@@ -141,6 +183,11 @@ class PingEnvelope(StrictModel):
     ts: datetime
     conversation_id: NonEmptyString
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("metadata", mode="before")
+    @classmethod
+    def normalize_metadata(cls, value: Any) -> Any:
+        return _normalize_map_entries(value)
 
 
 class ListVARequest(BaseModel):

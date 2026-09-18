@@ -40,6 +40,55 @@ def test_official_session_start_shape_is_accepted():
     assert parsed.payload.customer_org_id == "org-1"
 
 
+def test_wxcc_protobuf_map_entry_shape_is_normalized():
+    value = session_start()
+    value["metadata"] = [{"key": "channel", "value": "voice"}]
+    value["payload"]["additional_info"] = [
+        {"key": "source", "value": "flow"}
+    ]
+    value["payload"]["voice_va_input_type"]["event_input"]["parameters"] = [
+        {"key": "entry_point", "value": "ivr"}
+    ]
+
+    parsed = parse_incoming_envelope(value)
+
+    assert parsed.metadata == {"channel": "voice"}
+    assert parsed.payload.additional_info == {"source": "flow"}
+    assert parsed.payload.voice_va_input_type.event_input.parameters == {
+        "entry_point": "ivr"
+    }
+
+
+def test_empty_wxcc_protobuf_map_entry_shape_is_normalized():
+    value = session_start()
+    value["metadata"] = []
+    value["payload"]["additional_info"] = []
+    value["payload"]["voice_va_input_type"]["event_input"]["parameters"] = []
+
+    parsed = parse_incoming_envelope(value)
+
+    assert parsed.metadata == {}
+    assert parsed.payload.additional_info == {}
+    assert parsed.payload.voice_va_input_type.event_input.parameters == {}
+
+
+@pytest.mark.parametrize(
+    "entries",
+    [
+        [{"key": "one"}],
+        [{"key": 1, "value": "one"}],
+        [{"key": "one", "value": 1, "extra": True}],
+        [{"key": "one", "value": 1}, {"key": "one", "value": 2}],
+    ],
+)
+def test_malformed_wxcc_protobuf_map_entries_are_rejected(entries):
+    value = session_start()
+    value["metadata"] = entries
+
+    with pytest.raises(ValidationError):
+        parse_incoming_envelope(value)
+
+
 def test_discovery_ignores_forward_compatible_unknown_fields():
     parsed = ListVARequest.model_validate(
         {
