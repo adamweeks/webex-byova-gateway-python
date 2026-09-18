@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import logging
 import wave
 from typing import Any
 
@@ -335,6 +336,38 @@ def test_first_application_message_must_be_session_start():
             response = await socket.receive_json()
             assert response["type"] == "ERROR"
             assert response["status"] == 400
+        finally:
+            await client.close()
+            server.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_handshake_validation_logs_field_paths_without_peer_values(caplog):
+    async def scenario():
+        server = WebSocketGatewayServer(
+            FakeRouter(), allow_unauthenticated_local_dev=True
+        )
+        client = await _client_for(server)
+        try:
+            with caplog.at_level(
+                logging.INFO, logger="src.transports.websocket_server"
+            ):
+                socket = await client.ws_connect("/v1/va")
+                value = _start()
+                value["api_token\nforged"] = "do-not-log-this-peer-value"
+                await socket.send_json(value)
+                response = await socket.receive_json()
+            assert response["type"] == "ERROR"
+            assert response["status"] == 400
+            messages = "\n".join(record.getMessage() for record in caplog.records)
+            assert "websocket_voice_connection_opened" in messages
+            assert "category=schema_validation_failed" in messages
+            assert "api_token_forged:extra_forbidden" in messages
+            assert "api_token\nforged" not in messages
+            assert "do-not-log-this-peer-value" not in messages
+            assert "org-1" not in messages
+            assert "call-1" not in messages
         finally:
             await client.close()
             server.shutdown()

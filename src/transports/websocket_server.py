@@ -253,9 +253,17 @@ class WebSocketGatewayServer:
         termination_reason = "websocket_disconnect"
         close_code = 1001
         connection_id = uuid.uuid4().hex
+        first_frame_type = "not_received"
+        first_frame_bytes = 0
+        self.logger.info(
+            "websocket_voice_connection_opened connection_id=%s", connection_id
+        )
         try:
             first_message = await asyncio.wait_for(
                 socket.receive(), timeout=self.first_message_timeout_seconds
+            )
+            first_frame_type, first_frame_bytes = self._frame_diagnostics(
+                first_message
             )
             first = self._parse_voice_message(first_message)
             if not isinstance(first, VoiceVARequestEnvelope) or not is_session_start(
@@ -275,6 +283,14 @@ class WebSocketGatewayServer:
                         "no virtual agents are available", status=404
                     )
                 agent_id = available_agents[0]
+            self.logger.info(
+                "websocket_voice_session_start_accepted "
+                "connection_id=%s frame_type=%s frame_bytes=%d agent_supplied=%s",
+                connection_id,
+                first_frame_type,
+                first_frame_bytes,
+                bool(first.payload.virtual_agent_id),
+            )
             try:
                 self.router.get_connector_for_agent(agent_id, transport="websocket")
             except ValueError as error:
@@ -536,6 +552,12 @@ class WebSocketGatewayServer:
                 error=WebSocketProtocolError(str(error), status=409),
             )
         except asyncio.TimeoutError:
+            self._log_handshake_failure(
+                connection_id=connection_id,
+                category="session_start_timeout",
+                frame_type=first_frame_type,
+                frame_bytes=first_frame_bytes,
+            )
             await self._send_error_direct(
                 socket,
                 conversation_id="unknown",
@@ -548,6 +570,13 @@ class WebSocketGatewayServer:
                 ),
             )
         except (ValidationError, WebSocketProtocolError, ValueError) as error:
+            self._log_handshake_failure(
+                connection_id=connection_id,
+                category=self._handshake_error_category(error),
+                frame_type=first_frame_type,
+                frame_bytes=first_frame_bytes,
+                validation_fields=self._validation_fields(error),
+            )
             if isinstance(error, WebSocketProtocolError):
                 protocol_error = error
             elif isinstance(error, ValidationError):
@@ -621,6 +650,100 @@ class WebSocketGatewayServer:
                 "binary frames are not supported", close_code=1003
             )
         raise WebSocketProtocolError("WebSocket closed before a request was received")
+
+    @staticmethod
+    def _frame_diagnostics(message: Any) -> tuple[str, int]:
+        """Return bounded, payload-free information about one inbound frame."""
+
+        frame_type = getattr(message.type, "name", str(message.type))
+        data = message.data
+        if isinstance(data, str):
+            frame_bytes = len(data.encode("utf-8", errors="replace"))
+        elif isinstance(data, (bytes, bytearray, memoryview)):
+            frame_bytes = len(data)
+        else:
+            frame_bytes = 0
+        return frame_type, frame_bytes
+
+    @staticmethod
+    def _handshake_error_category(error: Exception) -> str:
+        """Classify a handshake failure without logging peer-controlled values."""
+
+        if isinstance(error, ValidationError):
+            return "schema_validation_failed"
+        if isinstance(error, WebSocketProtocolError):
+            detail = error.detail
+            if detail == "first application message must be a SESSION_START request":
+                return "first_message_not_session_start"
+            if detail == "message must contain valid JSON":
+                return "invalid_json"
+            if detail == "binary frames are not supported":
+                return "binary_frame"
+            if detail == "WebSocket closed before a request was received":
+                return "closed_before_first_message"
+            if detail.startswith("unsupported message type:"):
+                return "unsupported_message_type"
+            if detail == "no virtual agents are available":
+                return "no_virtual_agents"
+            if detail == "virtual agent was not found":
+                return "virtual_agent_not_found"
+            return "protocol_error"
+        return "invalid_message"
+
+    @staticmethod
+    def _validation_fields(error: Exception) -> str:
+        """Summarize validation locations and codes without input values."""
+
+        if not isinstance(error, ValidationError):
+            return "none"
+        summaries = []
+        for item in error.errors(
+            include_url=False, include_context=False, include_input=False
+        ):
+            location = ".".join(
+                WebSocketGatewayServer._safe_log_token(part)
+                for part in item.get("loc", ())
+            )
+            error_type = WebSocketGatewayServer._safe_log_token(
+                item.get("type", "validation_error")
+            )
+            summaries.append(f"{location}:{error_type}")
+            if len(summaries) == 8:
+                break
+        return ",".join(summaries) or "unknown"
+
+    @staticmethod
+    def _safe_log_token(value: Any, *, max_length: int = 80) -> str:
+        """Bound and neutralize a peer-influenced diagnostic token."""
+
+        text = str(value)
+        sanitized = "".join(
+            character
+            if character.isascii()
+            and (character.isalnum() or character in "._-[]")
+            else "_"
+            for character in text
+        )
+        return sanitized[:max_length] or "unknown"
+
+    def _log_handshake_failure(
+        self,
+        *,
+        connection_id: str,
+        category: str,
+        frame_type: str,
+        frame_bytes: int,
+        validation_fields: str = "none",
+    ) -> None:
+        self.logger.warning(
+            "websocket_voice_handshake_failed connection_id=%s category=%s "
+            "frame_type=%s frame_bytes=%d validation_fields=%s",
+            connection_id,
+            category,
+            frame_type,
+            frame_bytes,
+            validation_fields,
+        )
 
     def _parse_voice_message(self, message: Any):
         return parse_incoming_envelope(self._decode_text_json(message))
