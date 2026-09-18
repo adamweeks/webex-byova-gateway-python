@@ -166,10 +166,16 @@ The connector supports multiple ways to provide AWS credentials:
 - Full conversation handling not yet implemented
 - Audio processing integration pending
 
-### GECX / CX Agent Studio Connector (`gecx_connector.py`)
+### GECX / CX Agent Studio Connectors
 
 **Purpose**: Integration with CX Agent Studio (Gemini Enterprise for Customer
 Experience) through the CES `BidiRunSession` API.
+
+- `gecx_connector.py` uses the CES gRPC client.
+- `gecx_websocket_connector.py` uses the native CES JSON WebSocket endpoint and
+  shares the existing audio, turn, response, and terminal semantics.
+- Use distinct agent IDs and explicit `supported_transports` restrictions when
+  both provider connectors are configured in one gateway.
 
 **Features**:
 - Streams WxCC caller audio to Google as it arrives
@@ -223,7 +229,8 @@ gecx_connector:
 ```
 
 See the [GECX setup guide](../../docs/guides/byova-gecx-setup.md) and
-[`config/gecx_example.yaml`](../../config/gecx_example.yaml).
+[`config/gecx_example.yaml`](../../config/gecx_example.yaml) and
+[`config/gecx_websocket_example.yaml`](../../config/gecx_websocket_example.yaml).
 
 ## Adding New Connectors
 

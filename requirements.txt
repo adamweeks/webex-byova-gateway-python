@@ -43,6 +43,7 @@ google-api-core>=2.19.0
 google-auth>=2.29.0
 google-auth-oauthlib>=1.2.0
 googleapis-common-protos>=1.63.0
+websocket-client>=1.8.0,<2
 
 # Type checking
 typing_extensions>=4.14.1

@@ -124,6 +124,11 @@ gRPC-only, while Local Audio and GECX declare both. The router applies this
 eligibility to both agent discovery and runtime lookup. A deployment can still
 restrict either connector to one transport with an explicit override.
 
+For GECX, this setting is independent of the provider connection. Use
+`GECXConnector` for CES gRPC or `GECXWebSocketConnector` for native CES
+WebSocket. When both are loaded, give them distinct agent IDs and explicitly
+restrict each connector so discovery identifies the intended provider path.
+
 Available connector documentation:
 
 - [Connector interface and development](../src/connectors/README.md)
@@ -132,6 +137,7 @@ Available connector documentation:
 - [Google CX Agent Studio configuration](../docs/guides/byova-gecx-setup.md)
 - `config/aws_lex_example.yaml`
 - `config/gecx_example.yaml`
+- `config/gecx_websocket_example.yaml`
 - `config/config.cloudrun.yaml`
 
 ### Local Audio Connector
@@ -159,13 +165,16 @@ Use `agent_id`, not an `agents` list, to change the advertised local agent name.
 [Local Audio Connector Configuration](../docs/LOCAL_AUDIO_CONFIGURATION.md) for the local
 and end-to-end sandbox test paths.
 
-### GECX / CX Agent Studio Connector
+### GECX / CX Agent Studio Connectors
 
-The GECX connector streams WxCC caller audio to Google CX Agent Studio through the CES
+The GECX connectors stream WxCC caller audio to Google CX Agent Studio through the CES
 `BidiRunSession` API. It can request 24 kHz Linear16 output and perform the final
 anti-aliased 8 kHz mu-law conversion locally, or forward CES 8 kHz mu-law output
 directly. Both paths emit immediate BYOVA `CHUNK` responses followed by exactly
 one normal or terminal `FINAL`.
+
+`GECXConnector` uses CES gRPC. `GECXWebSocketConnector` is a separate module
+that uses the native CES JSON WebSocket endpoint with the same session behavior.
 
 ```yaml
 connectors:
@@ -237,7 +246,9 @@ Interactive OAuth credentials are stored as authorized-user JSON, written
 atomically with owner-only permissions. Do not reuse the former pickle token
 format; delete any old `gecx_oauth_token.pickle` file and authenticate again.
 
-See [`gecx_example.yaml`](gecx_example.yaml) for all options and the
+See [`gecx_example.yaml`](gecx_example.yaml) for the gRPC provider variant,
+[`gecx_websocket_example.yaml`](gecx_websocket_example.yaml) for native CES
+WebSocket, and the
 [GECX Setup Guide](../docs/guides/byova-gecx-setup.md) for IAM, deployment, and
 Webex Contact Center configuration.
 

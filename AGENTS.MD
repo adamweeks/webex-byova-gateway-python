@@ -119,6 +119,15 @@ webex-byova-gateway-python/
 - Includes Local Audio and GECX in that WebSocket-safe connector set by default
 - Enforces bounded queues, sender sequence order, fatal protocol errors, and disconnect cleanup
 
+### GECX provider transports
+
+- `GECXConnector` keeps the existing gateway-to-CES gRPC implementation.
+- `GECXWebSocketConnector` uses the native CES JSON WebSocket endpoint in a
+  separate module while reusing the established audio and lifecycle behavior.
+- `supported_transports` still describes the WxCC-facing protocol. Use distinct
+  agent IDs and explicit `grpc`/`websocket` restrictions when both provider
+  connectors are enabled in one gateway.
+
 **Core Methods:**
 - `ListVirtualAgents`: Returns available virtual agents
 - `ProcessCallerInput`: Bidirectional streaming for voice interactions
@@ -588,6 +597,8 @@ When analyzing this codebase as an AI agent:
 **Key Files to Know:**
 - `src/connectors/i_vendor_connector.py` - Abstract base class for all connectors
 - `src/connectors/local_audio_connector.py` - Working example connector
+- `src/connectors/gecx_connector.py` - CES gRPC provider connector and shared GECX behavior
+- `src/connectors/gecx_websocket_connector.py` - Native CES WebSocket provider connector
 - `src/core/wxcc_gateway_server.py` - Main gRPC server implementation
 - `src/transports/websocket_server.py` - WebSocket listener and lifecycle
 - `src/transports/websocket_models.py` - Strict concrete wire models

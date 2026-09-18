@@ -37,7 +37,8 @@ The sample includes:
 - Optional independent BYODS datasource registration and pre-expiry JWS renewal;
   a combined deployment uses separate Service Apps and token providers
 - A configuration-driven connector router
-- Local audio, AWS Lex, and Google CX Agent Studio connectors
+- Local audio, AWS Lex, and separate Google CX Agent Studio gRPC and native
+  WebSocket provider connectors
 - Immediate 8 kHz mu-law BYOVA `CHUNK` output for Google CX Agent Studio,
   either requested directly from CES or converted once from 24 kHz Linear16,
   with guarded suppression of anomalously long low-energy pre-roll and one
@@ -220,6 +221,9 @@ same pluggable connector architecture as gRPC. Connector discovery and runtime
 selection are transport-aware: undeclared connectors default to gRPC-only,
 while Local Audio and GECX declare both gRPC and WebSocket support. See
 [BYOVA WebSocket Transport](docs/WEBSOCKET_TRANSPORT.md).
+That capability describes the WxCC-facing listener. To use WebSocket on both
+hops, configure `GECXWebSocketConnector` and restrict its advertised agent to
+`supported_transports: ["websocket"]`.
 The Webex Service App must be authorized for the WebSocket datasource schema
 before that independent `wss://` datasource can be registered.
 Users can enable gRPC, WebSocket, or both. A single-transport deployment needs
@@ -246,10 +250,10 @@ production without the controls described in the production guide.
   [Local Audio Connector Configuration](docs/LOCAL_AUDIO_CONFIGURATION.md).
 - **AWS Lex**: Connects to Amazon Lex V2 through the standard AWS SDK credential chain.
 - **Google CX Agent Studio**: Streams caller audio to Gemini Enterprise for Customer
-  Experience through CES `BidiRunSession`. Caller speech starts an isolated response turn,
-  so an overlapping CES no-input prompt cannot consume the caller's post-input reply. The
-  connector can request 24 kHz Linear16 synthesis and perform the final anti-aliased 8 kHz
-  mu-law conversion locally. See the [GECX Setup Guide](docs/guides/byova-gecx-setup.md).
+  Experience through CES `BidiRunSession`. `GECXConnector` uses the CES gRPC
+  client; `GECXWebSocketConnector` uses Google's native JSON WebSocket gateway
+  while sharing the same audio, turn, and terminal behavior. Use distinct agent
+  IDs when both are loaded. See the [GECX Setup Guide](docs/guides/byova-gecx-setup.md).
 
 Connectors implement `IVendorConnector` and are loaded from `config/config.yaml`. See the
 [Connector Guide](src/connectors/README.md) for the interface contract and extension pattern.

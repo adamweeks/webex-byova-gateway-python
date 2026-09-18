@@ -140,6 +140,11 @@ WebSocket support; a deployment can restrict either connector with an explicit
 `supported_transports` override. Other connectors require a reviewed opt-in.
 A manually supplied agent ID cannot bypass this filter.
 
+This eligibility is the WxCC-to-gateway transport, not the provider protocol.
+`GECXConnector` talks to CES over gRPC even when it is exposed to WxCC through
+WebSocket. Configure the separate `GECXWebSocketConnector` and use a distinct
+agent ID when both the WxCC and CES connections should use WebSocket.
+
 - GECX declares `raw_chunk`.
 - Local Audio and AWS Lex declare `wav_final`.
 - Existing third-party connectors that do not declare the optional capability

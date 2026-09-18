@@ -113,6 +113,7 @@ connectors:
   #   type: "gecx_connector"
   #   class: "GECXConnector"
   #   module: "connectors.gecx_connector"
+  #   supported_transports: ["grpc"]
   #   config:
   #     project_id: "YOUR_PROJECT_ID"
   #     location: "us"
@@ -154,6 +155,34 @@ connectors:
   #     # service_account_key: "/path/to/service-account.json"
   #     agents:
   #       - "My GECX Agent"
+
+  # Native CES WebSocket provider connection. Keep a distinct agent ID so the
+  # WxCC WebSocket datasource cannot select the gRPC-backed provider connector.
+  # gecx_websocket_connector:
+  #   type: "gecx_websocket_connector"
+  #   class: "GECXWebSocketConnector"
+  #   module: "connectors.gecx_websocket_connector"
+  #   supported_transports: ["websocket"]
+  #   config:
+  #     project_id: "YOUR_PROJECT_ID"
+  #     location: "us"
+  #     application_id: "YOUR_APPLICATION_ID"
+  #     deployment_id: "YOUR_DEPLOYMENT_ID"
+  #     language_code: "en-US"
+  #     input_sample_rate_hertz: 8000
+  #     input_audio_encoding: "MULAW"
+  #     output_sample_rate_hertz: 24000
+  #     output_audio_encoding: "LINEAR16"
+  #     initial_message: "Hello"
+  #     input_stream_chunk_ms: 100
+  #     input_queue_max_chunks: 20
+  #     websocket_connect_timeout_seconds: 15
+  #     websocket_receive_timeout_seconds: 1
+  #     websocket_max_response_bytes: 4194304
+  #     # Omit websocket_endpoint to use the documented ces.googleapis.com WSS
+  #     # endpoint. Omit auth settings to use Application Default Credentials.
+  #     agents:
+  #       - "GECX WebSocket Agent"
 
 # Monitoring interface
 monitoring:
