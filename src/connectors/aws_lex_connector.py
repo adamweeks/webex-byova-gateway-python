@@ -132,6 +132,10 @@ class AWSLexConnector(IVendorConnector):
     def get_audio_delivery_mode(self) -> str:
         return "utterance_buffered"
 
+    def get_websocket_output_mode(self) -> str:
+        """Lex returns one complete WAV response for each turn."""
+        return "wav_final"
+
     def should_observe_speech_boundaries(self, conversation_id: str) -> bool:
         """Disable gateway VAD while Lex is handling DTMF input."""
         return not self.session_manager.has_dtmf_mode_tracking(conversation_id)
@@ -804,6 +808,5 @@ class AWSLexConnector(IVendorConnector):
         """Refresh the cached list of available bots."""
         self.session_manager.refresh_bot_cache()
         self.get_available_agents()
-
 
 

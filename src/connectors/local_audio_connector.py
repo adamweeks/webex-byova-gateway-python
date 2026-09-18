@@ -7,12 +7,12 @@ It's useful for testing and development purposes.
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Iterator, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
-from ..utils.audio_utils import AudioConverter
 from ..utils.audio_buffer import AudioBuffer
 from ..utils.audio_recorder import AudioRecorder
-from .i_vendor_connector import IVendorConnector, EventTypes
+from ..utils.audio_utils import AudioConverter
+from .i_vendor_connector import EventTypes, IVendorConnector
 
 
 class LocalAudioConnector(IVendorConnector):
@@ -82,6 +82,14 @@ class LocalAudioConnector(IVendorConnector):
             List containing the local playback agent ID with connector prefix
         """
         return [f"Local Audio: {self.agent_id}"]
+
+    def get_supported_transports(self) -> frozenset[str]:
+        """Expose the deterministic test connector over both gateway protocols."""
+        return frozenset({"grpc", "websocket"})
+
+    def get_websocket_output_mode(self) -> str:
+        """Local test prompts are complete WAV files."""
+        return "wav_final"
 
     def start_conversation(
         self, conversation_id: str, request_data: Dict[str, Any]

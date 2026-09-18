@@ -2212,6 +2212,14 @@ class GECXConnector(IVendorConnector):
         """GECX receives caller audio frames as they arrive from WxCC."""
         return "streaming"
 
+    def get_supported_transports(self) -> frozenset[str]:
+        """GECX supports both turn-based gRPC and full-duplex WebSocket."""
+        return frozenset({"grpc", "websocket"})
+
+    def get_websocket_output_mode(self) -> str:
+        """GECX streams raw audio chunks as they arrive from CES."""
+        return "raw_chunk"
+
     def should_cleanup_on_client_stream_end(self) -> bool:
         """Close CES after WxCC cancellation or request-stream failure."""
         return True

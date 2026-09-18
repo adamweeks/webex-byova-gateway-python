@@ -10,13 +10,12 @@ This module tests the LocalAudioConnector class functionality including:
 - Error handling and fallbacks
 """
 
-import pytest
-from unittest.mock import MagicMock, patch, Mock, call
-import logging
-from pathlib import Path
-import tempfile
 import shutil
-from typing import Dict, Any
+import tempfile
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from src.connectors.local_audio_connector import LocalAudioConnector
 
@@ -147,6 +146,13 @@ class TestLocalAudioConnector:
         
         expected_agents = ["Local Audio: TestAgent"]
         assert agents == expected_agents
+
+    def test_declares_grpc_and_websocket_transport_support(self, connector):
+        """Local playback is safe for discovery and sessions on both protocols."""
+        assert connector.get_supported_transports() == frozenset(
+            {"grpc", "websocket"}
+        )
+        assert connector.get_websocket_output_mode() == "wav_final"
 
     def test_start_conversation_success(self, connector, temp_audio_dir):
         """Test successful conversation start."""

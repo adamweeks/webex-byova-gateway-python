@@ -15,9 +15,13 @@ All connectors must implement `IVendorConnector` which defines:
 - **Conversation Management**: `start_conversation()`, `end_conversation()`
 - **Message Handling**: `send_message()`
 - **Agent Discovery**: `get_available_agents()`
+- **Transport Capability**: `get_supported_transports()` defaults to gRPC-only;
+  a connector or reviewed deployment override must explicitly enable WebSocket
 - **Data Conversion**: `convert_wxcc_to_vendor()`, `convert_vendor_to_wxcc()`
 - **Optional Streaming Coordination**: asynchronous response delivery, held
   speech-turn pause/resume/commit, and current-input acknowledgement hooks
+- **Optional WebSocket Framing**: `get_websocket_output_mode()` returns
+  `raw_chunk` or `wav_final`; existing connectors default to `raw_chunk`
 
 ### Interface Contract
 
@@ -47,6 +51,14 @@ class IVendorConnector(ABC):
     def get_available_agents(self) -> list[str]:
         """Return list of available agent IDs"""
         pass
+
+    def get_websocket_output_mode(self) -> str:
+        """Optional; defaults to raw_chunk for source compatibility"""
+        return "raw_chunk"
+
+    def get_supported_transports(self) -> frozenset[str]:
+        """Optional; defaults to the safe gRPC-only eligibility set"""
+        return frozenset({"grpc"})
 ```
 
 ## Available Connectors
@@ -71,6 +83,8 @@ connectors:
     type: "local_audio_connector"
     class: "LocalAudioConnector"
     module: "connectors.local_audio_connector"
+    # Local Audio supports both; restrict this list for a single-protocol demo.
+    supported_transports: ["grpc", "websocket"]
     config:
       agent_id: "Local Playback"
       audio_base_path: "audio"

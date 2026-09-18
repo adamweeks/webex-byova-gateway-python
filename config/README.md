@@ -34,6 +34,43 @@ memory and apply backpressure; they are not production throughput targets.
 announcement responses. GECX raw CHUNK streaming does not use this delay.
 Maximum gRPC message sizes and the concurrent-stream option remain set in `main.py`.
 
+## Transport Listeners
+
+```yaml
+transports:
+  mode: "grpc" # grpc | websocket | both
+  allow_partial_transport_startup: false
+  websocket:
+    host: "0.0.0.0"
+    port: 8765
+    first_message_timeout_seconds: 10
+    discovery_idle_timeout_seconds: 5
+    terminal_flush_timeout_seconds: 2
+    queue_maxsize: 100
+    queue_put_timeout_seconds: 1
+    max_message_bytes: 131072
+    connector_max_workers: 20
+    connector_max_pending: 20
+    output_chunk_bytes: 3200
+    allow_unauthenticated_local_dev: false
+```
+
+If `transports` is absent, the gateway remains gRPC-only. `grpc` and
+`websocket` require only their selected transport's authentication and
+datasource configuration. `both` starts the listeners in one process with a
+shared router and conversation registry, while keeping their Service Apps,
+datasources, JWT profiles, and renewal workers independent. Partial startup
+requires the explicit development override and applies only to `both` mode.
+
+`discovery_idle_timeout_seconds` bounds how long the server waits for the WxCC
+control-plane peer to close after receiving the virtual-agent list. The server
+does not immediately close the discovery socket after sending the response.
+
+The local authentication bypass is accepted only from a loopback peer. Public
+and Webex-connected WebSockets require the independent
+`websocket_jwt_validation` profile. See
+[BYOVA WebSocket Transport](../docs/WEBSOCKET_TRANSPORT.md).
+
 ## Voice Activity Detection
 
 ```yaml
@@ -70,6 +107,7 @@ connectors:
     type: "local_audio_connector"
     class: "LocalAudioConnector"
     module: "connectors.local_audio_connector"
+    supported_transports: ["grpc", "websocket"]
     config:
       agent_id: "Local Playback"
       audio_base_path: "audio"
@@ -79,6 +117,12 @@ The loader requires each connector to provide `class` and `module`; an omitted `
 mapping defaults to an empty dictionary. It dynamically imports `src.<module>`, verifies
 that the class implements `IVendorConnector`, and registers the agents returned by the
 connector.
+
+`supported_transports` accepts only `grpc` and `websocket`. When it is omitted,
+the connector's declared safe default is used; the base connector default is
+gRPC-only, while Local Audio and GECX declare both. The router applies this
+eligibility to both agent discovery and runtime lookup. A deployment can still
+restrict either connector to one transport with an explicit override.
 
 Available connector documentation:
 
@@ -264,6 +308,24 @@ URL. The gateway will not start with an empty value.
 See [gRPC JWT Authentication](../docs/JWT_AUTHENTICATION.md) for claims, issuers, deployment
 modes, and troubleshooting.
 
+## WebSocket JWT Validation
+
+```yaml
+websocket_jwt_validation:
+  enabled: true
+  datasource_url: "wss://your-gateway.example.com"
+  datasource_schema_uuid: "a38a10b7-43e4-4676-a076-a7d6dce9387d"
+  cache_duration_minutes: 60
+```
+
+Authentication completes before the HTTP connection upgrades. The WebSocket
+and gRPC validators share fetched JWKS keys but validate their own datasource
+URL and schema claims.
+The WebSocket datasource URL is the secure WebSocket origin without the
+`/v1/va` path. Use the exact URL accepted at registration in the JWT profile
+too. With an AWS ALB, route `/v1/va` and
+`/v1/listVirtualAgents` to the private WebSocket listener on port 8765.
+
 ## BYODS Datasource Lifecycle
 
 The optional `data_source` section uses `webex-byods-sdk` to discover or register the
@@ -301,6 +363,14 @@ rejects ambiguous matches. Explicit `url` and `schema_id` values must match the 
 For short-lived development, use `auth.type: "static"` with
 `access_token_env: "WEBEX_BYODS_ACCESS_TOKEN"`. Static access tokens cannot be refreshed;
 use OAuth refresh credentials for unattended operation.
+
+`websocket_data_source` has the same lifecycle fields but uses its own ID, URL,
+WebSocket schema, and WebSocket-only Service App. It falls back to
+`websocket_jwt_validation` values rather than the gRPC profile. In `both` mode,
+the gateway rejects identical credential mappings, datasource IDs, or datasource
+ID environment-variable names. The organization administrator OAuth bootstrap
+identity may be shared, but the two Service App identities may not be shared.
+Each lifecycle creates and renews its own token provider.
 
 ## Logging
 

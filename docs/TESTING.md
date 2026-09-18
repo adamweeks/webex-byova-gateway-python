@@ -1,7 +1,7 @@
 # Testing Guide
 
-This guide covers the automated test suite and local smoke tests for the HTTP monitoring and
-gRPC services.
+This guide covers the automated test suite and local smoke tests for the HTTP monitoring,
+gRPC, and WebSocket services.
 
 ## Prerequisites
 
@@ -43,6 +43,19 @@ python run_tests.py tests/test_jwt_validation.py
 python run_tests.py tests/test_wxcc_gateway_server.py::TestConversationProcessor
 ```
 
+The WebSocket-focused local suite is:
+
+```bash
+python -m pytest \
+  tests/test_conversation_registry.py \
+  tests/test_websocket_models.py \
+  tests/test_websocket_adapter.py \
+  tests/test_websocket_server.py
+```
+
+It uses local aiohttp test listeners and fake providers; it does not call Webex,
+AWS, or another external service.
+
 List collected tests:
 
 ```bash
@@ -63,6 +76,9 @@ python main.py
 ```
 
 Do not use disabled authentication for a public or production endpoint.
+
+For a local dual-listener run and the discovery/session smoke client, follow
+[BYOVA WebSocket Transport](WEBSOCKET_TRANSPORT.md).
 
 ## HTTP Smoke Tests
 
