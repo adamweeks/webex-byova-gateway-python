@@ -493,6 +493,11 @@ def main():
                 terminal_flush_timeout_seconds=float(
                     websocket_config.get("terminal_flush_timeout_seconds", 2.0)
                 ),
+                terminal_peer_close_timeout_seconds=float(
+                    websocket_config.get(
+                        "terminal_peer_close_timeout_seconds", 30.0
+                    )
+                ),
                 queue_maxsize=int(websocket_config.get("queue_maxsize", 100)),
                 queue_put_timeout_seconds=float(
                     websocket_config.get("queue_put_timeout_seconds", 1.0)

@@ -46,6 +46,7 @@ transports:
     first_message_timeout_seconds: 10
     discovery_idle_timeout_seconds: 5
     terminal_flush_timeout_seconds: 2
+    terminal_peer_close_timeout_seconds: 30
     queue_maxsize: 100
     queue_put_timeout_seconds: 1
     max_message_bytes: 131072
@@ -65,6 +66,12 @@ requires the explicit development override and applies only to `both` mode.
 `discovery_idle_timeout_seconds` bounds how long the server waits for the WxCC
 control-plane peer to close after receiving the virtual-agent list. The server
 does not immediately close the discovery socket after sending the response.
+
+After sending `TRANSFER_TO_AGENT` or server-initiated `SESSION_END`, the
+gateway flushes the terminal response and leaves the conversation socket open
+for the WxCC peer to close, as required by the WebSocket lifecycle. The
+`terminal_peer_close_timeout_seconds` safety bound closes an unresponsive peer
+after 30 seconds by default.
 
 The local authentication bypass is accepted only from a loopback peer. Public
 and Webex-connected WebSockets require the independent

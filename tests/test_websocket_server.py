@@ -8,6 +8,7 @@ from typing import Any
 
 from aiohttp import WSServerHandshakeError
 from aiohttp.test_utils import TestClient, TestServer
+import pytest
 
 from src.auth.jwt_validator import AccessTokenException
 from src.core.conversation_registry import ConversationRegistry
@@ -296,10 +297,47 @@ def test_jwt_failure_is_rejected_before_websocket_upgrade():
     asyncio.run(scenario())
 
 
-def test_terminal_response_flushes_then_closes_and_cleans_provider_once():
+@pytest.mark.parametrize(
+    ("message_type", "event_type"),
+    [
+        ("session_end", "SESSION_END"),
+        ("transfer", "TRANSFER_TO_AGENT"),
+    ],
+)
+def test_terminal_response_waits_for_peer_close_and_cleans_provider_once(
+    message_type, event_type
+):
+    async def scenario():
+        router = FakeRouter(start_message_type=message_type)
+        server = WebSocketGatewayServer(router, allow_unauthenticated_local_dev=True)
+        client = await _client_for(server)
+        try:
+            socket = await client.ws_connect("/v1/va")
+            await socket.send_json(_start())
+            response = await socket.receive_json()
+            assert response["type"] == "VOICE_VA_RESPONSE"
+            assert response["payload"]["output_events"][0]["event_type"] == event_type
+            await asyncio.sleep(0.05)
+            assert not socket.closed
+            await socket.close()
+            await _wait_for_cleanup(router)
+            assert socket.closed
+            assert router.end_calls == 1
+        finally:
+            await client.close()
+            server.shutdown()
+
+    asyncio.run(scenario())
+
+
+def test_terminal_response_peer_close_wait_is_bounded():
     async def scenario():
         router = FakeRouter(start_message_type="session_end")
-        server = WebSocketGatewayServer(router, allow_unauthenticated_local_dev=True)
+        server = WebSocketGatewayServer(
+            router,
+            allow_unauthenticated_local_dev=True,
+            terminal_peer_close_timeout_seconds=0.05,
+        )
         client = await _client_for(server)
         try:
             socket = await client.ws_connect("/v1/va")

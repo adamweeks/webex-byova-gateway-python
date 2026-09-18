@@ -215,6 +215,10 @@ schema.
   for WebSocket and then waits for the peer to close, with a bounded idle timeout.
 - `/health`: Minimal HTTP process health for a private load-balancer probe.
 
+Terminal transfer and session-end responses are flushed before the gateway
+waits for the Webex peer to close the conversation socket, with a bounded
+fallback timeout for abandoned connections.
+
 The listener uses the official WebSocket datasource schema, requires
 `SESSION_START`, preserves ordered full-duplex provider output, and shares the
 same pluggable connector architecture as gRPC. Connector discovery and runtime

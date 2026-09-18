@@ -30,6 +30,12 @@ envelope must use a strictly increasing `seq`; gaps are allowed. Binary frames,
 unknown message types, malformed JSON, invalid lifecycle transitions, and
 sustained queue pressure produce an `ERROR` and close the socket.
 
+For a partner-initiated transfer or session end, the gateway sends the
+terminal `VOICE_VA_RESPONSE`, flushes it, and waits for WxCC to close the
+conversation socket. It does not close immediately after sending the terminal
+event. A bounded peer-close timeout prevents an abandoned connection from
+holding provider state indefinitely.
+
 The gateway owns VAD by default even though the socket is full duplex. A
 connector may opt out through the existing speech-boundary capability, but the
 gateway and provider must not both detect boundaries for one conversation.

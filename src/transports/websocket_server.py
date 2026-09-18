@@ -81,6 +81,7 @@ class WebSocketGatewayServer:
         first_message_timeout_seconds: float = 10.0,
         discovery_idle_timeout_seconds: float = 5.0,
         terminal_flush_timeout_seconds: float = 2.0,
+        terminal_peer_close_timeout_seconds: float = 30.0,
         queue_maxsize: int = 100,
         queue_put_timeout_seconds: float = 1.0,
         max_message_bytes: int = 128 * 1024,
@@ -113,6 +114,9 @@ class WebSocketGatewayServer:
         )
         self.terminal_flush_timeout_seconds = max(
             0.0, float(terminal_flush_timeout_seconds)
+        )
+        self.terminal_peer_close_timeout_seconds = max(
+            0.1, float(terminal_peer_close_timeout_seconds)
         )
         self.queue_maxsize = queue_maxsize
         self.queue_put_timeout_seconds = max(0.01, float(queue_put_timeout_seconds))
@@ -365,7 +369,7 @@ class WebSocketGatewayServer:
             await inbound.put(first)
 
             async def reader() -> None:
-                nonlocal close_code
+                nonlocal close_code, termination_reason
                 last_seq = first.seq
                 message_index = 1
                 frame_type = "not_received"
@@ -400,6 +404,20 @@ class WebSocketGatewayServer:
                             raise WebSocketProtocolError(
                                 "virtual_agent_id cannot change on an open socket"
                             )
+                        if terminal.is_set():
+                            input_value = incoming.payload.voice_va_input_type
+                            if (
+                                hasattr(input_value, "event_input")
+                                and input_value.event_input.event_type == "SESSION_END"
+                            ):
+                                termination_reason = "completed"
+                                stop.set()
+                                return
+                            # WxCC can have caller-media frames in flight while it
+                            # processes a terminal output event. The virtual-agent
+                            # leg is already complete, so ignore those frames while
+                            # waiting for the peer-owned close handshake.
+                            continue
                         try:
                             await asyncio.wait_for(
                                 inbound.put(incoming),
@@ -462,7 +480,18 @@ class WebSocketGatewayServer:
                                 if self._is_terminal(response):
                                     termination_reason = "completed"
                                     terminal.set()
-                                    stop.set()
+                                    try:
+                                        await asyncio.wait_for(
+                                            stop.wait(),
+                                            timeout=(
+                                                self.terminal_peer_close_timeout_seconds
+                                            ),
+                                        )
+                                    except asyncio.TimeoutError:
+                                        termination_reason = (
+                                            "terminal_peer_close_timeout"
+                                        )
+                                        stop.set()
                                     return
                         finally:
                             inbound.task_done()

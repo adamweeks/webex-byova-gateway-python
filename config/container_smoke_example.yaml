@@ -21,6 +21,7 @@ transports:
     first_message_timeout_seconds: 10
     discovery_idle_timeout_seconds: 5
     terminal_flush_timeout_seconds: 2
+    terminal_peer_close_timeout_seconds: 30
     queue_maxsize: 20
     queue_put_timeout_seconds: 1
     max_message_bytes: 131072
