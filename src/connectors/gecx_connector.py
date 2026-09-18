@@ -832,12 +832,22 @@ class GECXStreamingSession:
                 if self.is_terminal:
                     return
 
-                buffered_text = self._active_text()
-                may_have_terminal = self.connector.may_have_delayed_terminal(
-                    buffered_text
+                with self._lock:
+                    buffered_text = "".join(self._text_buffer)
+                    empty_completed_turn = (
+                        not buffered_text and not self._turn_audio_emitted
+                    )
+                terminal_grace_reason = (
+                    "empty_completed_turn"
+                    if empty_completed_turn
+                    else (
+                        "terminal_cue"
+                        if self.connector.may_have_delayed_terminal(buffered_text)
+                        else ""
+                    )
                 )
                 if (
-                    may_have_terminal
+                    terminal_grace_reason
                     and terminal_grace_seconds > 0
                     and terminal_grace_deadline is None
                 ):
@@ -846,9 +856,10 @@ class GECXStreamingSession:
                     )
                     self.logger.info(
                         "[%s] [GECX] Waiting up to %.1fs for a terminal event "
-                        "after streamed announcement audio",
+                        "after turn completion reason=%s",
                         self.conversation_id,
                         terminal_grace_seconds,
+                        terminal_grace_reason,
                     )
 
                 if (

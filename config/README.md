@@ -220,6 +220,12 @@ connectors:
         - "My GECX Agent"
 ```
 
+`terminal_response_grace_seconds` prevents a late CES `EndSession` from
+following an already-committed normal `FINAL`. The connector applies the grace
+window after terminal-sounding output and after a completed turn with no audio
+or text, since native CES WebSocket sessions can send the terminal event just
+after an empty turn-complete signal.
+
 GECX accepts two explicit provider-output pairs: `24000`/`LINEAR16` for the
 recommended connector-side conversion path, or `8000`/`MULAW` for direct CES
 mu-law. WxCC always receives 8 kHz mu-law; unsupported provider-output pairs

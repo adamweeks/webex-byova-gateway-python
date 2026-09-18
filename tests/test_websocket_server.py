@@ -400,7 +400,11 @@ def test_post_handshake_validation_returns_error_and_logs_safely(caplog):
                 response = await socket.receive_json()
             assert response["type"] == "ERROR"
             assert response["status"] == 400
-            messages = "\n".join(record.getMessage() for record in caplog.records)
+            messages = "\n".join(
+                record.getMessage()
+                for record in caplog.records
+                if "websocket_voice_frame_rejected" in record.getMessage()
+            )
             assert "websocket_voice_frame_rejected" in messages
             assert "message_index=2" in messages
             assert "category=schema_validation_failed" in messages

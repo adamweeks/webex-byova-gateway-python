@@ -481,8 +481,10 @@ it, and the output turn closes with one `FINAL`.
 Caller audio is buffered from a bounded pre-roll through the gateway's Silero
 speech-end boundary, then sent to CES as one contiguous turn. This prevents a
 natural pause inside an utterance from becoming an unintended CES barge-in.
-After a terminal-sounding response, the connector also allows a short grace
-window for an `EndSession` that follows the final TTS frames.
+After a terminal-sounding response or a completed turn with no audio or text,
+the connector also allows a short grace window for an `EndSession` that follows
+the turn-complete signal. This prevents the gateway from sending a normal
+`FINAL` immediately before a terminal transfer `FINAL`.
 
 ## Configuration reference
 
@@ -518,7 +520,7 @@ window for an `EndSession` that follows the final TTS frames.
 | `input_stream_chunk_ms` | No | Maximum duration of each queued CES caller-audio item (default: `100`, range: `20`-`100`) |
 | `input_queue_max_chunks` | No | Maximum pending CES input items before explicit backpressure failure (default: `20`, range: `1`-`200`) |
 | `input_queue_put_timeout_ms` | No | Maximum wait for CES input queue capacity before terminating the session (default: `50`, maximum: `1000`) |
-| `terminal_response_grace_seconds` | No | Wait for delayed `EndSession` after a terminal-sounding TTS turn (default: `3`) |
+| `terminal_response_grace_seconds` | No | Wait for delayed `EndSession` after a terminal-sounding TTS turn or an empty completed turn (default: `3`) |
 | `transfer_metadata_keys` | No | EndSession metadata keys that, when truthy, trigger a human transfer (see [Escalation](#escalation-to-a-human-agent)) |
 | `transfer_reason_keywords` | No | Substrings that, if found in a reason/type metadata value, trigger a transfer |
 | `transfer_reason_metadata_keys` | No | Which metadata keys are scanned for `transfer_reason_keywords` |
