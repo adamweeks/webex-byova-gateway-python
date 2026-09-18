@@ -163,6 +163,22 @@ def test_audio_content_is_optional_per_published_contract():
     assert parsed.payload.voice_va_input_type.audio_input.caller_audio_b64 is None
 
 
+def test_wxcc_nullable_single_utterance_defaults_to_false():
+    value = session_start()
+    value["payload"]["voice_va_input_type"] = {
+        "audio_input": {
+            "caller_audio_b64": base64.b64encode(b"caller audio").decode("ascii"),
+            "encoding": "MULAW_FORMAT",
+            "sample_rate_hertz": 8000,
+            "is_single_utterance": None,
+        }
+    }
+
+    parsed = parse_incoming_envelope(value)
+
+    assert parsed.payload.voice_va_input_type.audio_input.is_single_utterance is False
+
+
 def test_unknown_message_type_is_fatal_to_parsing():
     with pytest.raises(ValueError, match="unsupported message type"):
         parse_incoming_envelope(

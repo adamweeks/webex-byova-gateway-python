@@ -72,6 +72,11 @@ class VoiceInput(StrictModel):
     language_code: str | None = Field(default=None, max_length=64)
     is_single_utterance: bool = False
 
+    @field_validator("is_single_utterance", mode="before")
+    @classmethod
+    def normalize_nullable_single_utterance(cls, value: Any) -> Any:
+        return False if value is None else value
+
     @field_validator("caller_audio_b64")
     @classmethod
     def validate_audio(cls, value: str | None) -> str | None:
