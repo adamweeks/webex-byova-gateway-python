@@ -367,8 +367,13 @@ class WebSocketGatewayServer:
             async def reader() -> None:
                 nonlocal close_code
                 last_seq = first.seq
+                message_index = 1
+                frame_type = "not_received"
+                frame_bytes = 0
                 try:
                     async for message in socket:
+                        message_index += 1
+                        frame_type, frame_bytes = self._frame_diagnostics(message)
                         incoming = self._parse_voice_message(message)
                         if incoming.seq <= last_seq:
                             raise WebSocketProtocolError(
@@ -407,9 +412,27 @@ class WebSocketGatewayServer:
                                 status=429,
                                 close_code=1013,
                             ) from error
-                except WebSocketProtocolError as error:
-                    close_code = error.close_code
-                    await enqueue_outbound(_Outbound("ERROR", error=error))
+                except (ValidationError, WebSocketProtocolError, ValueError) as error:
+                    self._log_frame_failure(
+                        connection_id=connection_id,
+                        message_index=message_index,
+                        category=self._handshake_error_category(error),
+                        frame_type=frame_type,
+                        frame_bytes=frame_bytes,
+                        validation_fields=self._validation_fields(error),
+                    )
+                    if isinstance(error, WebSocketProtocolError):
+                        protocol_error = error
+                    elif isinstance(error, ValidationError):
+                        protocol_error = WebSocketProtocolError(
+                            "message does not match the WebSocket contract"
+                        )
+                    else:
+                        protocol_error = WebSocketProtocolError(str(error))
+                    close_code = protocol_error.close_code
+                    await enqueue_outbound(
+                        _Outbound("ERROR", error=protocol_error)
+                    )
                 finally:
                     stop.set()
                     try:
@@ -739,6 +762,27 @@ class WebSocketGatewayServer:
             "websocket_voice_handshake_failed connection_id=%s category=%s "
             "frame_type=%s frame_bytes=%d validation_fields=%s",
             connection_id,
+            category,
+            frame_type,
+            frame_bytes,
+            validation_fields,
+        )
+
+    def _log_frame_failure(
+        self,
+        *,
+        connection_id: str,
+        message_index: int,
+        category: str,
+        frame_type: str,
+        frame_bytes: int,
+        validation_fields: str = "none",
+    ) -> None:
+        self.logger.warning(
+            "websocket_voice_frame_rejected connection_id=%s message_index=%d "
+            "category=%s frame_type=%s frame_bytes=%d validation_fields=%s",
+            connection_id,
+            message_index,
             category,
             frame_type,
             frame_bytes,

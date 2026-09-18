@@ -375,6 +375,46 @@ def test_handshake_validation_logs_field_paths_without_peer_values(caplog):
     asyncio.run(scenario())
 
 
+def test_post_handshake_validation_returns_error_and_logs_safely(caplog):
+    async def scenario():
+        router = FakeRouter()
+        server = WebSocketGatewayServer(
+            router, allow_unauthenticated_local_dev=True
+        )
+        client = await _client_for(server)
+        try:
+            with caplog.at_level(
+                logging.INFO, logger="src.transports.websocket_server"
+            ):
+                socket = await client.ws_connect("/v1/va")
+                await socket.send_json(_start())
+                assert (await socket.receive_json())["type"] == "VOICE_VA_RESPONSE"
+                invalid = _start(seq=2)
+                invalid["payload"]["voice_va_input_type"] = {
+                    "audio_input": {
+                        "caller_audio_b64": "do-not-log-this-peer-value",
+                        "encoding": "MULAW_FORMAT",
+                    }
+                }
+                await socket.send_json(invalid)
+                response = await socket.receive_json()
+            assert response["type"] == "ERROR"
+            assert response["status"] == 400
+            messages = "\n".join(record.getMessage() for record in caplog.records)
+            assert "websocket_voice_frame_rejected" in messages
+            assert "message_index=2" in messages
+            assert "category=schema_validation_failed" in messages
+            assert "sample_rate_hertz:missing" in messages
+            assert "do-not-log-this-peer-value" not in messages
+            assert "org-1" not in messages
+            assert "call-1" not in messages
+        finally:
+            await client.close()
+            server.shutdown()
+
+    asyncio.run(scenario())
+
+
 def test_duplicate_sequence_is_fatal_and_disconnect_cleans_provider_once():
     async def scenario():
         router = FakeRouter()
