@@ -1,4 +1,5 @@
 import json
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -250,3 +251,107 @@ def test_gateway_event_url_enables_exact_outcome_assertions(
     assert captured_config is not None
     assert captured_config.require_gateway_events is True
     assert captured_config.gateway_events_url == "http://127.0.0.1:8080"
+
+
+def test_ssm_tunnel_supplies_loopback_gateway_event_url(
+    tmp_path: Path, monkeypatch
+) -> None:
+    captured_config = None
+    opened_tunnel = None
+
+    def fake_render_text(text, _voice, output_path):
+        output_path.write_bytes(text.encode())
+        return PreparedAudio(output_path, "1" * 64, 1)
+
+    class FakeRunner:
+        def __init__(self, _tool_root, config):
+            nonlocal captured_config
+            captured_config = config
+
+        def run(self):
+            return {}
+
+    @contextmanager
+    def fake_tunnel(config):
+        nonlocal opened_tunnel
+        opened_tunnel = config
+        yield
+
+    monkeypatch.setattr("byova_e2e.cli.render_text", fake_render_text)
+    monkeypatch.setattr("byova_e2e.cli.access_token_for_run", lambda _store: "token")
+    monkeypatch.setattr("byova_e2e.cli.BrowserRunner", FakeRunner)
+    monkeypatch.setattr("byova_e2e.cli.gateway_event_tunnel", fake_tunnel)
+    monkeypatch.setattr(
+        "byova_e2e.cli.write_artifact",
+        lambda _directory, _payload: tmp_path / "artifact.json",
+    )
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--destination",
+            "9999",
+            "--text",
+            "Hello",
+            "--expect-outcome",
+            "transfer",
+            "--gateway-events-ssm-target",
+            "i-0123456789abcdef0",
+            "--gateway-events-ssm-host",
+            "10.0.1.186",
+            "--gateway-events-ssm-region",
+            "us-east-1",
+        ]
+    )
+
+    _run(args)
+
+    assert captured_config is not None
+    assert captured_config.require_gateway_events is True
+    assert captured_config.gateway_events_url == "http://127.0.0.1:18080"
+    assert opened_tunnel is not None
+    assert opened_tunnel.target == "i-0123456789abcdef0"
+    assert opened_tunnel.remote_host == "10.0.1.186"
+
+
+def test_ssm_tunnel_rejects_partial_configuration(monkeypatch) -> None:
+    monkeypatch.delenv("BYOVA_E2E_GATEWAY_EVENTS_URL", raising=False)
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--destination",
+            "9999",
+            "--text",
+            "Hello",
+            "--expect-outcome",
+            "transfer",
+            "--gateway-events-ssm-target",
+            "i-0123456789abcdef0",
+        ]
+    )
+
+    with pytest.raises(CLIError, match="requires both"):
+        _run(args)
+
+
+def test_ssm_tunnel_rejects_direct_url_combination(monkeypatch) -> None:
+    monkeypatch.delenv("BYOVA_E2E_GATEWAY_EVENTS_URL", raising=False)
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--destination",
+            "9999",
+            "--text",
+            "Hello",
+            "--expect-outcome",
+            "transfer",
+            "--gateway-events-url",
+            "http://127.0.0.1:8080",
+            "--gateway-events-ssm-target",
+            "i-0123456789abcdef0",
+            "--gateway-events-ssm-host",
+            "10.0.1.186",
+        ]
+    )
+
+    with pytest.raises(CLIError, match="either a direct gateway events URL"):
+        _run(args)

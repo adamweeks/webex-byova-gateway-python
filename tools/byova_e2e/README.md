@@ -303,6 +303,32 @@ export BYOVA_E2E_GATEWAY_EVENTS_URL=http://127.0.0.1:8080
 development monitoring interface on a restricted or securely forwarded path;
 do not expose it publicly for E2E access.
 
+For an AWS deployment whose monitoring listener is private, the runner can own
+an AWS Systems Manager remote-host port-forward for the duration of the call.
+This requires AWS CLI credentials, the Session Manager plugin, and an
+SSM-managed EC2 instance that can reach the gateway's private host and port.
+Supply deployment-specific identifiers through the ignored `.env` file or the
+equivalent CLI options; do not put them in a committed test plan.
+
+```bash
+export BYOVA_E2E_GATEWAY_EVENTS_SSM_TARGET=i-0123456789abcdef0
+export BYOVA_E2E_GATEWAY_EVENTS_SSM_HOST=10.0.1.25
+export BYOVA_E2E_GATEWAY_EVENTS_SSM_REGION=us-east-1
+
+byova-e2e run \
+  --destination 9999 \
+  --text 'Please transfer me to an agent.' \
+  --expect-outcome transfer
+```
+
+The runner starts `AWS-StartPortForwardingSessionToRemoteHost` without a shell,
+waits for `http://127.0.0.1:18080`, reads `/api/connections` through that
+loopback listener, and terminates the session after the run. Override the
+private port with `BYOVA_E2E_GATEWAY_EVENTS_SSM_REMOTE_PORT` and the loopback
+port with `BYOVA_E2E_GATEWAY_EVENTS_SSM_LOCAL_PORT`. The corresponding CLI
+options use the `--gateway-events-ssm-*` prefix. A direct gateway-events URL and
+an SSM tunnel are mutually exclusive.
+
 For custom fixtures, `--expect-outcome response|session-end|transfer` enables
 the same assertions without using a named test. Flows that guarantee a
 minimum connected interval after transfer can add
@@ -318,9 +344,9 @@ and inspect it without placing a call:
 byova-e2e validate --config config/gecx-regression.spec.json --list
 ```
 
-The plan requires correlated gateway events. Before running it, set
-`BYOVA_E2E_GATEWAY_EVENTS_URL` to the restricted monitoring endpoint for the
-same gateway deployment being called.
+The plan requires correlated gateway events. Before running it, set either
+`BYOVA_E2E_GATEWAY_EVENTS_URL` to a restricted monitoring endpoint or configure
+the SSM tunnel above for the same gateway deployment being called.
 
 Run one test at a time against the dedicated non-production entry point:
 

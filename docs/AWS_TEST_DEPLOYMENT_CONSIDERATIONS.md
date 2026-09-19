@@ -175,6 +175,9 @@ Use separate security groups for the ALB and EC2 test host.
 - If the HTTP target group is enabled, allow inbound TCP 8080 from the ALB security group
   only.
 - Do not allow public inbound SSH. Use SSM for test administration.
+- For E2E terminal-outcome assertions, keep the monitoring listener private and use the
+  E2E caller's bounded SSM remote-host port-forward. Do not add a public listener rule
+  solely to expose `/api/connections`.
 - Allow the outbound HTTPS paths required for Amazon Lex, Webex identity and BYODS APIs, S3,
   SSM, package installation, and any approved telemetry destination.
 

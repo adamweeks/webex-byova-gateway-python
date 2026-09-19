@@ -25,6 +25,11 @@ from .auth import (
     default_token_path,
     load_local_environment,
 )
+from .gateway_tunnel import (
+    GatewayTunnelError,
+    SSMPortForwardConfig,
+    gateway_event_tunnel,
+)
 from .models import (
     AudioAsset,
     ExpectedOutcome,
@@ -143,6 +148,38 @@ def build_parser() -> argparse.ArgumentParser:
         help="Fail unless the expected outcome is proven by gateway diagnostics",
     )
     run.add_argument(
+        "--gateway-events-ssm-target",
+        default=None,
+        help="SSM-managed EC2 instance used to reach the private monitoring listener",
+    )
+    run.add_argument(
+        "--gateway-events-ssm-host",
+        default=None,
+        help="Private gateway host reachable from the SSM-managed instance",
+    )
+    run.add_argument(
+        "--gateway-events-ssm-remote-port",
+        type=int,
+        default=None,
+        help="Private monitoring port forwarded through SSM (default: 8080)",
+    )
+    run.add_argument(
+        "--gateway-events-ssm-local-port",
+        type=int,
+        default=None,
+        help="Loopback port exposed to the E2E observer (default: 18080)",
+    )
+    run.add_argument(
+        "--gateway-events-ssm-region",
+        default=None,
+        help="Optional AWS region for the SSM session",
+    )
+    run.add_argument(
+        "--gateway-events-ssm-profile",
+        default=None,
+        help="Optional local AWS CLI profile for the SSM session",
+    )
+    run.add_argument(
         "--expect-outcome",
         choices=[
             ExpectedOutcome.RESPONSE.value,
@@ -214,6 +251,7 @@ def main(argv: list[str] | None = None) -> None:
         RunFailure,
         TestPlanError,
         CLIError,
+        GatewayTunnelError,
     ) as error:
         if args.command == "run":
             event_history = [
@@ -309,8 +347,12 @@ def _run(args: argparse.Namespace) -> None:
         if args.expect_outcome
         else (selected_test.expected_outcome if selected_test else None)
     )
-    gateway_events_url = args.gateway_events_url or os.getenv(
+    direct_gateway_events_url = args.gateway_events_url or os.getenv(
         "BYOVA_E2E_GATEWAY_EVENTS_URL"
+    )
+    gateway_tunnel_config, gateway_events_url = _gateway_event_connection(
+        args,
+        direct_gateway_events_url,
     )
     require_gateway_events = bool(
         args.require_gateway_events
@@ -471,7 +513,8 @@ def _run(args: argparse.Namespace) -> None:
             audio_assets=tuple(audio_assets),
             steps=tuple(run_steps),
         )
-        result = BrowserRunner(TOOL_ROOT, config).run()
+        with gateway_event_tunnel(gateway_tunnel_config):
+            result = BrowserRunner(TOOL_ROOT, config).run()
 
     artifact = write_artifact(
         args.artifact_dir,
@@ -498,6 +541,11 @@ def _run(args: argparse.Namespace) -> None:
             "browser_profile": {"headless": config.headless},
             "gateway_event_profile": {
                 "required": config.require_gateway_events,
+                "transport": (
+                    "ssm"
+                    if gateway_tunnel_config
+                    else ("direct" if config.gateway_events_url else "disabled")
+                ),
             },
             "test": selected_test.test_id if selected_test else None,
             "test_title": selected_test.title if selected_test else None,
@@ -556,3 +604,74 @@ def _configured(
         if test_value is not None:
             return test_value
     return default
+
+
+def _gateway_event_connection(
+    args: argparse.Namespace,
+    direct_url: str | None,
+) -> tuple[SSMPortForwardConfig | None, str | None]:
+    """Resolve a direct URL or a loopback-only SSM event connection."""
+    target = args.gateway_events_ssm_target or os.getenv(
+        "BYOVA_E2E_GATEWAY_EVENTS_SSM_TARGET"
+    )
+    remote_host = args.gateway_events_ssm_host or os.getenv(
+        "BYOVA_E2E_GATEWAY_EVENTS_SSM_HOST"
+    )
+    remote_port = _configured_port(
+        args.gateway_events_ssm_remote_port,
+        "BYOVA_E2E_GATEWAY_EVENTS_SSM_REMOTE_PORT",
+        8080,
+    )
+    local_port = _configured_port(
+        args.gateway_events_ssm_local_port,
+        "BYOVA_E2E_GATEWAY_EVENTS_SSM_LOCAL_PORT",
+        18080,
+    )
+    region = args.gateway_events_ssm_region or os.getenv(
+        "BYOVA_E2E_GATEWAY_EVENTS_SSM_REGION"
+    )
+    profile = args.gateway_events_ssm_profile or os.getenv(
+        "BYOVA_E2E_GATEWAY_EVENTS_SSM_PROFILE"
+    )
+    configured_values = (
+        target,
+        remote_host,
+        args.gateway_events_ssm_remote_port,
+        args.gateway_events_ssm_local_port,
+        region,
+        profile,
+        os.getenv("BYOVA_E2E_GATEWAY_EVENTS_SSM_REMOTE_PORT"),
+        os.getenv("BYOVA_E2E_GATEWAY_EVENTS_SSM_LOCAL_PORT"),
+    )
+    if not any(value is not None for value in configured_values):
+        return None, direct_url
+    if direct_url:
+        raise CLIError(
+            "Use either a direct gateway events URL or the SSM tunnel options, not both"
+        )
+    if not target or not remote_host:
+        raise CLIError(
+            "The SSM gateway event tunnel requires both --gateway-events-ssm-target "
+            "and --gateway-events-ssm-host"
+        )
+    config = SSMPortForwardConfig(
+        target=target,
+        remote_host=remote_host,
+        remote_port=remote_port,
+        local_port=local_port,
+        region=region,
+        profile=profile,
+    )
+    return config, config.events_url
+
+
+def _configured_port(cli_value: int | None, environment_name: str, default: int) -> int:
+    if cli_value is not None:
+        return cli_value
+    raw_value = os.getenv(environment_name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError as error:
+        raise CLIError(f"{environment_name} must be an integer") from error

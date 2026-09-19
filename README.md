@@ -52,6 +52,8 @@ The sample includes:
 - gRPC and HTTP health checks
 - A development monitoring dashboard
 - Unit tests and local gRPC smoke-test utilities
+- A local end-to-end caller that can correlate exact gateway outcomes through a
+  loopback-only AWS Systems Manager port-forward to a private monitoring listener
 
 ## Quick Start
 
@@ -314,6 +316,10 @@ dependencies are installed through `requirements-dev.txt` and must not be copied
 gateway or included in an image or release archive. Gateway containers install only
 `requirements.txt`. Deploying the whole repository can cause host scanners to report
 development-only dependencies as if the gateway loaded them at runtime.
+The E2E caller can temporarily forward a private monitoring listener through an
+SSM-managed host so exact terminal outcomes are observed without publishing the monitoring
+API. Keep the instance ID, private host, region, profile, and ports in ignored local
+configuration; see [the E2E caller guide](tools/byova_e2e/README.md).
 
 Before deployment, scan the generated archive and verify its checksum. Keep environment
 configuration and secrets outside the artifact and inject them through the deployment
