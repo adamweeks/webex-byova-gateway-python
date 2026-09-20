@@ -6,9 +6,9 @@ import logging
 import wave
 from typing import Any
 
+import pytest
 from aiohttp import WSServerHandshakeError
 from aiohttp.test_utils import TestClient, TestServer
-import pytest
 
 from src.auth.jwt_validator import AccessTokenException
 from src.core.conversation_registry import ConversationRegistry
@@ -102,6 +102,15 @@ async def _wait_for_cleanup(router: FakeRouter) -> None:
     raise AssertionError("provider cleanup did not complete")
 
 
+def _write_wav(path, audio: bytes = bytes(range(256)) * 4) -> None:
+    """Write deterministic PCM audio for Local Audio transport tests."""
+    with wave.open(str(path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(1)
+        wav_file.setframerate(8000)
+        wav_file.writeframes(audio)
+
+
 def test_health_is_available_without_websocket_authentication():
     async def scenario():
         class RejectingValidator:
@@ -161,11 +170,7 @@ def test_discovery_uses_shared_router_catalog():
 def test_local_audio_is_discoverable_and_plays_wav_over_websocket(tmp_path):
     """Exercise Local Audio through the real router and WebSocket adapter."""
     welcome_path = tmp_path / "welcome.wav"
-    with wave.open(str(welcome_path), "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(1)
-        wav_file.setframerate(8000)
-        wav_file.writeframes(bytes(range(256)) * 4)
+    _write_wav(welcome_path)
 
     router = VirtualAgentRouter()
     router.load_connectors(
@@ -210,6 +215,119 @@ def test_local_audio_is_discoverable_and_plays_wav_over_websocket(tmp_path):
             response = await socket.receive_json()
             assert response["type"] == "VOICE_VA_RESPONSE"
             assert response["payload"]["response_type"] == "FINAL"
+            audio = base64.b64decode(
+                response["payload"]["prompts"][0]["audio_content_b64"],
+                validate=True,
+            )
+            assert audio.startswith(b"RIFF")
+            assert audio[8:12] == b"WAVE"
+            await socket.close()
+        finally:
+            await client.close()
+            server.shutdown()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("wire_digit", "audio_name", "expected_event", "expected_text"),
+    [
+        (
+            "DTMF_DIGIT_FIVE",
+            "transfer.wav",
+            "TRANSFER_TO_AGENT",
+            "Transferring you to an agent. Please wait.",
+        ),
+        (
+            "DTMF_DIGIT_SIX",
+            "goodbye.wav",
+            "SESSION_END",
+            "Thank you for calling. Goodbye!",
+        ),
+    ],
+)
+def test_local_audio_dtmf_works_over_websocket(
+    tmp_path,
+    wire_digit,
+    audio_name,
+    expected_event,
+    expected_text,
+):
+    """Route schema-valid DTMF through the socket into Local Audio."""
+    welcome_path = tmp_path / "welcome.wav"
+    action_path = tmp_path / audio_name
+    _write_wav(welcome_path)
+    _write_wav(action_path, bytes(reversed(range(256))) * 4)
+
+    router = VirtualAgentRouter()
+    router.load_connectors(
+        {
+            "connectors": {
+                "local_audio_connector": {
+                    "class": "LocalAudioConnector",
+                    "module": "connectors.local_audio_connector",
+                    "config": {
+                        "agent_id": "Local Playback",
+                        "audio_base_path": str(tmp_path),
+                        "audio_files": {
+                            "welcome": welcome_path.name,
+                            "transfer": "transfer.wav",
+                            "goodbye": "goodbye.wav",
+                        },
+                    },
+                }
+            }
+        }
+    )
+
+    async def scenario():
+        server = WebSocketGatewayServer(
+            router,
+            allow_unauthenticated_local_dev=True,
+            terminal_peer_close_timeout_seconds=0.5,
+        )
+        client = await _client_for(server)
+        try:
+            socket = await client.ws_connect("/v1/va")
+            await socket.send_json(
+                _start(
+                    conversation_id="local-audio-dtmf",
+                    agent_id="Local Audio: Local Playback",
+                )
+            )
+            welcome = await socket.receive_json()
+            assert welcome["type"] == "VOICE_VA_RESPONSE"
+            assert welcome["payload"]["input_mode"] == "INPUT_VOICE_DTMF"
+            assert welcome["payload"]["input_handling_config"]["dtmf_config"] == {
+                "inter_digit_timeout_msec": 300,
+                "termchar": "DTMF_DIGIT_POUND",
+                "dtmf_input_length": 1,
+            }
+
+            await socket.send_json(
+                {
+                    "type": "VOICE_VA_REQUEST",
+                    "seq": 2,
+                    "ts": "2026-09-08T12:00:01Z",
+                    "conversation_id": "local-audio-dtmf",
+                    "payload": {
+                        "conversation_id": "local-audio-dtmf",
+                        "customer_org_id": "org-1",
+                        "virtual_agent_id": "Local Audio: Local Playback",
+                        "voice_va_input_type": {
+                            "dtmf_input": {"dtmf_events": [wire_digit]}
+                        },
+                    },
+                }
+            )
+            response = await socket.receive_json()
+            assert response["type"] == "VOICE_VA_RESPONSE"
+            assert response["seq"] == 2
+            assert response["payload"]["response_type"] == "FINAL"
+            assert response["payload"]["prompts"][0]["text"] == expected_text
+            assert (
+                response["payload"]["output_events"][0]["event_type"] == expected_event
+            )
             audio = base64.b64decode(
                 response["payload"]["prompts"][0]["audio_content_b64"],
                 validate=True,
@@ -323,6 +441,14 @@ def test_terminal_response_waits_for_peer_close_and_cleans_provider_once(
             await _wait_for_cleanup(router)
             assert socket.closed
             assert router.end_calls == 1
+            terminal_events = [
+                event
+                for event in server.get_connection_events()
+                if event["event_type"] == "terminal"
+            ]
+            assert len(terminal_events) == 1
+            assert terminal_events[0]["outcome"] == event_type
+            assert terminal_events[0]["transport"] == "websocket"
         finally:
             await client.close()
             server.shutdown()
@@ -416,9 +542,7 @@ def test_handshake_validation_logs_field_paths_without_peer_values(caplog):
 def test_post_handshake_validation_returns_error_and_logs_safely(caplog):
     async def scenario():
         router = FakeRouter()
-        server = WebSocketGatewayServer(
-            router, allow_unauthenticated_local_dev=True
-        )
+        server = WebSocketGatewayServer(router, allow_unauthenticated_local_dev=True)
         client = await _client_for(server)
         try:
             with caplog.at_level(

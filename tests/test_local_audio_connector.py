@@ -245,7 +245,11 @@ class TestLocalAudioConnector:
         
         response = list(connector.send_message("conv123", message_data))
         assert len(response) == 0  # Should return no responses (None was returned)
-        connector.logger.info.assert_any_call("DTMF digits entered: 123")
+        connector.logger.info.assert_any_call(
+            "Received %d DTMF control digit(s) for conversation %s",
+            3,
+            "conv123",
+        )
 
     def test_send_message_dtmf_no_events(self, connector):
         """Test handling of DTMF input with no events."""

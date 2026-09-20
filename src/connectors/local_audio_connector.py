@@ -197,11 +197,10 @@ class LocalAudioConnector(IVendorConnector):
         dtmf_events = dtmf_data.get("dtmf_events", [])
         if dtmf_events:
             self.logger.info(
-                f"Received DTMF input for conversation {conversation_id}: {dtmf_events}"
+                "Received %d DTMF control digit(s) for conversation %s",
+                len(dtmf_events),
+                conversation_id,
             )
-            # Convert DTMF events to a string for easier processing
-            dtmf_string = "".join([str(digit) for digit in dtmf_events])
-            self.logger.info(f"DTMF digits entered: {dtmf_string}")
 
             # Check if user entered '5' for transfer
             if len(dtmf_events) == 1 and dtmf_events[0] == 5:  # DTMF_DIGIT_FIVE = 5
@@ -264,7 +263,11 @@ class LocalAudioConnector(IVendorConnector):
                 )
 
         # Return None for unrecognized DTMF inputs (no response needed)
-        self.logger.debug(f"Unrecognized DTMF input for conversation {conversation_id}: {dtmf_events} - returning None")
+        self.logger.debug(
+            "Unrecognized DTMF input for conversation %s (%d digit(s)); returning None",
+            conversation_id,
+            len(dtmf_events),
+        )
         return None
 
     def _handle_audio_input(self, conversation_id: str, message_data: Dict[str, Any]) -> Iterator[Optional[Dict[str, Any]]]:

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -266,9 +267,7 @@ class WebSocketGatewayServer:
             first_message = await asyncio.wait_for(
                 socket.receive(), timeout=self.first_message_timeout_seconds
             )
-            first_frame_type, first_frame_bytes = self._frame_diagnostics(
-                first_message
-            )
+            first_frame_type, first_frame_bytes = self._frame_diagnostics(first_message)
             first = self._parse_voice_message(first_message)
             if not isinstance(first, VoiceVARequestEnvelope) or not is_session_start(
                 first
@@ -352,6 +351,27 @@ class WebSocketGatewayServer:
                 )
                 for payload in payloads:
                     await enqueue_outbound(_Outbound("VOICE_VA_RESPONSE", payload))
+                for output_event in self._terminal_events(response):
+                    outcome = (
+                        "SESSION_END"
+                        if output_event.event_type == OutputEvent.EventType.SESSION_END
+                        else "TRANSFER_TO_AGENT"
+                    )
+                    self._add_event(
+                        "terminal",
+                        lease,
+                        agent_id,
+                        outcome=outcome,
+                        name=output_event.name,
+                    )
+                    self.logger.info(
+                        "websocket_terminal_output conversation_id=%s agent_id=%s "
+                        "outcome=%s name=%s",
+                        lease.conversation_id,
+                        agent_id,
+                        outcome,
+                        output_event.name,
+                    )
 
             def connector_response_sink(response: VoiceVAResponse) -> bool:
                 future = asyncio.run_coroutine_threadsafe(
@@ -448,9 +468,7 @@ class WebSocketGatewayServer:
                     else:
                         protocol_error = WebSocketProtocolError(str(error))
                     close_code = protocol_error.close_code
-                    await enqueue_outbound(
-                        _Outbound("ERROR", error=protocol_error)
-                    )
+                    await enqueue_outbound(_Outbound("ERROR", error=protocol_error))
                 finally:
                     stop.set()
                     try:
@@ -771,8 +789,7 @@ class WebSocketGatewayServer:
         text = str(value)
         sanitized = "".join(
             character
-            if character.isascii()
-            and (character.isalnum() or character in "._-[]")
+            if character.isascii() and (character.isalnum() or character in "._-[]")
             else "_"
             for character in text
         )
@@ -823,14 +840,21 @@ class WebSocketGatewayServer:
 
     @staticmethod
     def _is_terminal(response: VoiceVAResponse) -> bool:
-        return any(
-            event.event_type
-            in {
-                OutputEvent.EventType.SESSION_END,
-                OutputEvent.EventType.TRANSFER_TO_AGENT,
-            }
+        return bool(WebSocketGatewayServer._terminal_events(response))
+
+    @staticmethod
+    def _terminal_events(response: VoiceVAResponse) -> list[OutputEvent]:
+        return [
+            event
             for event in response.output_events
-        )
+            if (
+                event.event_type
+                in {
+                    OutputEvent.EventType.SESSION_END,
+                    OutputEvent.EventType.TRANSFER_TO_AGENT,
+                }
+            )
+        ]
 
     async def _send_error_direct(
         self,
@@ -871,6 +895,7 @@ class WebSocketGatewayServer:
             "customer_org_id": lease.customer_org_id,
             "conversation_id": lease.conversation_id,
             "agent_id": agent_id,
+            "timestamp": time.time(),
             **values,
         }
         self._connection_events.append(event)

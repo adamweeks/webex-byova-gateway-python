@@ -154,3 +154,67 @@ def test_normal_response_binds_after_start_event_is_evicted() -> None:
     observer.begin()
 
     assert observer.assert_outcome(ExpectedOutcome.RESPONSE, 0) is None
+
+
+def test_terminal_outcome_requires_expected_websocket_local_audio_profile() -> None:
+    start = {
+        **_start(),
+        "agent_id": "Local Audio: Local Playback",
+        "transport": "websocket",
+    }
+    terminal = {
+        **_terminal("TRANSFER_TO_AGENT"),
+        "agent_id": "Local Audio: Local Playback",
+        "transport": "websocket",
+    }
+    observer = GatewayEventObserver(
+        "http://127.0.0.1:8080",
+        poll_interval_seconds=0,
+        fetch_events=_Snapshots([], [start, terminal]),
+        expected_transport="websocket",
+        expected_agent_id="Local Audio: Local Playback",
+    )
+    observer.begin()
+
+    event = observer.assert_outcome(ExpectedOutcome.TRANSFER, 0)
+
+    assert event is not None
+    assert event["transport"] == "websocket"
+    assert event["agent_id"] == "Local Audio: Local Playback"
+
+
+def test_gateway_profile_rejects_wrong_transport() -> None:
+    observer = GatewayEventObserver(
+        "http://127.0.0.1:8080",
+        poll_interval_seconds=0,
+        fetch_events=_Snapshots([], [{**_start(), "transport": "grpc"}]),
+        expected_transport="websocket",
+    )
+    observer.begin()
+
+    with pytest.raises(GatewayEventError, match="transport mismatch"):
+        observer.assert_outcome(ExpectedOutcome.RESPONSE, 0)
+
+
+def test_terminal_profile_cannot_differ_from_matching_start_event() -> None:
+    start = {
+        **_start(),
+        "agent_id": "Local Audio: Local Playback",
+        "transport": "websocket",
+    }
+    terminal = {
+        **_terminal("TRANSFER_TO_AGENT"),
+        "agent_id": "Other Agent",
+        "transport": "websocket",
+    }
+    observer = GatewayEventObserver(
+        "http://127.0.0.1:8080",
+        poll_interval_seconds=0,
+        fetch_events=_Snapshots([], [start, terminal]),
+        expected_transport="websocket",
+        expected_agent_id="Local Audio: Local Playback",
+    )
+    observer.begin()
+
+    with pytest.raises(GatewayEventError, match="agent mismatch"):
+        observer.assert_outcome(ExpectedOutcome.TRANSFER, 0)

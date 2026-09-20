@@ -31,6 +31,8 @@ class GatewayEventObserver:
         poll_interval_seconds: float = 0.2,
         request_timeout_seconds: float = 5.0,
         fetch_events: Callable[[], list[dict[str, Any]]] | None = None,
+        expected_transport: str | None = None,
+        expected_agent_id: str | None = None,
     ) -> None:
         endpoint = endpoint.rstrip("/")
         self.endpoint = (
@@ -41,13 +43,17 @@ class GatewayEventObserver:
         self.poll_interval_seconds = max(0.0, poll_interval_seconds)
         self.request_timeout_seconds = request_timeout_seconds
         self._fetch_events_override = fetch_events
+        self.expected_transport = expected_transport
+        self.expected_agent_id = expected_agent_id
         self._baseline: set[str] | None = None
         self._conversation_id: str | None = None
+        self._profile_verified = not (expected_transport or expected_agent_id)
 
     def begin(self) -> None:
         """Snapshot existing events before the browser dials."""
         self._baseline = {self._event_key(event) for event in self._fetch_events()}
         self._conversation_id = None
+        self._profile_verified = not (self.expected_transport or self.expected_agent_id)
 
     def assert_outcome(
         self,
@@ -70,8 +76,14 @@ class GatewayEventObserver:
                 if self._event_key(event) not in self._baseline
             ]
             self._bind_conversation(new_events)
+            self._verify_conversation_profile(new_events)
             terminal_event = self._terminal_event(new_events)
             if terminal_event is not None:
+                if not self._profile_verified:
+                    raise GatewayEventError(
+                        "Gateway diagnostics did not prove the expected transport "
+                        "and agent for the E2E conversation"
+                    )
                 return self._assert_terminal_outcome(expected, terminal_event)
 
             if time.monotonic() >= deadline:
@@ -86,6 +98,11 @@ class GatewayEventObserver:
         if self._conversation_id is None:
             raise GatewayEventError(
                 "Gateway diagnostics did not expose the E2E conversation"
+            )
+        if not self._profile_verified:
+            raise GatewayEventError(
+                "Gateway diagnostics did not prove the expected transport and agent "
+                f"for conversation {self._conversation_id}"
             )
         if expected in {ExpectedOutcome.SESSION_END, ExpectedOutcome.TRANSFER}:
             raise GatewayEventError(
@@ -113,9 +130,46 @@ class GatewayEventObserver:
         if conversation_ids:
             self._conversation_id = conversation_ids.pop()
 
-    def _terminal_event(
-        self, events: list[dict[str, Any]]
-    ) -> dict[str, Any] | None:
+    def _verify_conversation_profile(self, events: list[dict[str, Any]]) -> None:
+        """Require explicit transport/agent evidence for the bound conversation."""
+        if self._conversation_id is None:
+            return
+        matching = [
+            event
+            for event in events
+            if event.get("conversation_id") == self._conversation_id
+        ]
+        for event in matching:
+            transport = event.get("transport")
+            agent_id = event.get("agent_id")
+            if (
+                self.expected_transport is not None
+                and transport is not None
+                and transport != self.expected_transport
+            ):
+                raise GatewayEventError(
+                    "Gateway transport mismatch: expected "
+                    f"{self.expected_transport}, observed {transport}"
+                )
+            if (
+                self.expected_agent_id is not None
+                and agent_id is not None
+                and agent_id != self.expected_agent_id
+            ):
+                raise GatewayEventError(
+                    "Gateway agent mismatch: expected "
+                    f"{self.expected_agent_id}, observed {agent_id}"
+                )
+            transport_matches = (
+                self.expected_transport is None or transport == self.expected_transport
+            )
+            agent_matches = (
+                self.expected_agent_id is None or agent_id == self.expected_agent_id
+            )
+            if transport_matches and agent_matches:
+                self._profile_verified = True
+
+    def _terminal_event(self, events: list[dict[str, Any]]) -> dict[str, Any] | None:
         if self._conversation_id is None:
             return None
         terminal_events = [
@@ -139,6 +193,7 @@ class GatewayEventObserver:
         expected: ExpectedOutcome,
         event: dict[str, Any],
     ) -> dict[str, Any]:
+        self._assert_event_profile(event)
         outcome = str(event.get("outcome", ""))
         if expected == ExpectedOutcome.RESPONSE:
             raise GatewayEventError(
@@ -151,6 +206,25 @@ class GatewayEventObserver:
                 f"{expected.value}, observed {outcome}"
             )
         return self._artifact_event(event)
+
+    def _assert_event_profile(self, event: dict[str, Any]) -> None:
+        """Tie terminal evidence to the configured transport and agent."""
+        if (
+            self.expected_transport is not None
+            and event.get("transport") != self.expected_transport
+        ):
+            raise GatewayEventError(
+                "Gateway terminal transport mismatch: expected "
+                f"{self.expected_transport}, observed {event.get('transport')}"
+            )
+        if (
+            self.expected_agent_id is not None
+            and event.get("agent_id") != self.expected_agent_id
+        ):
+            raise GatewayEventError(
+                "Gateway terminal agent mismatch: expected "
+                f"{self.expected_agent_id}, observed {event.get('agent_id')}"
+            )
 
     def _fetch_events(self) -> list[dict[str, Any]]:
         events: Any
@@ -195,6 +269,7 @@ class GatewayEventObserver:
                 "timestamp",
                 "outcome",
                 "name",
+                "transport",
             )
             if key in event
         }

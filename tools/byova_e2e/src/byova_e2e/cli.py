@@ -35,6 +35,7 @@ from .models import (
     ExpectedOutcome,
     RunAction,
     RunConfig,
+    RunDtmfAction,
     RunExpectation,
 )
 from .plan import (
@@ -146,6 +147,17 @@ def build_parser() -> argparse.ArgumentParser:
         "--require-gateway-events",
         action="store_true",
         help="Fail unless the expected outcome is proven by gateway diagnostics",
+    )
+    run.add_argument(
+        "--gateway-transport",
+        choices=["grpc", "websocket"],
+        default=None,
+        help="Require the correlated gateway conversation to use this transport",
+    )
+    run.add_argument(
+        "--gateway-agent-id",
+        default=None,
+        help="Require the correlated gateway conversation to use this exact agent ID",
     )
     run.add_argument(
         "--gateway-events-ssm-target",
@@ -359,6 +371,18 @@ def _run(args: argparse.Namespace) -> None:
         or gateway_events_url
         or (selected_test and selected_test.require_gateway_events)
     )
+    expected_gateway_transport = _configured(
+        args.gateway_transport,
+        selected_test,
+        "expected_gateway_transport",
+        None,
+    )
+    expected_gateway_agent_id = _configured(
+        args.gateway_agent_id,
+        selected_test,
+        "expected_gateway_agent_id",
+        None,
+    )
     expected_response_prompts = (
         args.expected_response_prompts
         if args.expected_response_prompts is not None
@@ -403,6 +427,12 @@ def _run(args: argparse.Namespace) -> None:
         raise CLIError(
             "Gateway event assertions require --expect-outcome or a named test"
         )
+    if (
+        expected_gateway_transport or expected_gateway_agent_id
+    ) and not require_gateway_events:
+        raise CLIError(
+            "Gateway transport or agent assertions require gateway event assertions"
+        )
     if gateway_events_url and not gateway_events_url.startswith(
         ("http://", "https://")
     ):
@@ -419,10 +449,15 @@ def _run(args: argparse.Namespace) -> None:
         if selected_test is not None:
             audio_assets: list[AudioAsset] = []
             audio_profiles: list[dict[str, object]] = []
-            run_steps: list[RunAction | RunExpectation] = []
+            run_steps: list[RunAction | RunDtmfAction | RunExpectation] = []
             action_index = 0
             for step_index, step in enumerate(selected_test.steps):
                 if isinstance(step, InputStepDefinition):
+                    if step.dtmf_digit is not None:
+                        run_steps.append(
+                            RunDtmfAction(digit=step.dtmf_digit, name=step.name)
+                        )
+                        continue
                     prepared_step, profile = _prepare_input_step(
                         step,
                         voice,
@@ -489,13 +524,15 @@ def _run(args: argparse.Namespace) -> None:
             audio_profiles = [profile]
             run_steps = []
 
-        primary_audio = audio_assets[0]
+        primary_audio = audio_assets[0] if audio_assets else None
         config = RunConfig(
             destination=args.destination,
             access_token=token,
-            audio_path=primary_audio.path,
-            audio_sha256=primary_audio.sha256,
-            audio_duration_seconds=primary_audio.duration_seconds,
+            audio_path=primary_audio.path if primary_audio else None,
+            audio_sha256=primary_audio.sha256 if primary_audio else None,
+            audio_duration_seconds=(
+                primary_audio.duration_seconds if primary_audio else None
+            ),
             remote_silence_seconds=remote_silence_ms / 1000,
             initial_silence_fallback_seconds=initial_silence_fallback_seconds,
             prompt_timeout_seconds=prompt_timeout_seconds,
@@ -509,6 +546,8 @@ def _run(args: argparse.Namespace) -> None:
             connected_observation_seconds=connected_observation_seconds,
             gateway_events_url=gateway_events_url,
             require_gateway_events=require_gateway_events,
+            expected_gateway_transport=expected_gateway_transport,
+            expected_gateway_agent_id=expected_gateway_agent_id,
             headless=headless,
             audio_assets=tuple(audio_assets),
             steps=tuple(run_steps),
@@ -523,7 +562,7 @@ def _run(args: argparse.Namespace) -> None:
             "status": "completed",
             "audio_sha256": config.audio_sha256,
             "audio_duration_seconds": config.audio_duration_seconds,
-            "audio_profile": audio_profiles[0],
+            "audio_profile": audio_profiles[0] if audio_profiles else None,
             "audio_profiles": [
                 {
                     **profile,
@@ -541,6 +580,8 @@ def _run(args: argparse.Namespace) -> None:
             "browser_profile": {"headless": config.headless},
             "gateway_event_profile": {
                 "required": config.require_gateway_events,
+                "expected_transport": config.expected_gateway_transport,
+                "expected_agent_id": config.expected_gateway_agent_id,
                 "transport": (
                     "ssm"
                     if gateway_tunnel_config

@@ -68,6 +68,16 @@
         },
         "requireGatewayEvents": {
           "type": "boolean"
+        },
+        "gatewayTransport": {
+          "enum": [
+            "grpc",
+            "websocket"
+          ]
+        },
+        "gatewayAgentId": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -107,6 +117,9 @@
               },
               {
                 "$ref": "#/definitions/play"
+              },
+              {
+                "$ref": "#/definitions/dtmf"
               },
               {
                 "$ref": "#/definitions/expectStep"
@@ -187,6 +200,26 @@
         "path": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "dtmf": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action",
+        "digit"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/namedStep"
+        },
+        "action": {
+          "const": "dtmf"
+        },
+        "digit": {
+          "type": "string",
+          "pattern": "^[0-9A-D*#]$"
         }
       }
     },
