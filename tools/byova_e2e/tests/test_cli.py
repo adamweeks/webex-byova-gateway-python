@@ -297,7 +297,7 @@ def test_ssm_tunnel_supplies_loopback_gateway_event_url(
             "--gateway-events-ssm-target",
             "i-0123456789abcdef0",
             "--gateway-events-ssm-host",
-            "10.0.1.186",
+            "gateway.internal.example",
             "--gateway-events-ssm-region",
             "us-east-1",
         ]
@@ -310,7 +310,7 @@ def test_ssm_tunnel_supplies_loopback_gateway_event_url(
     assert captured_config.gateway_events_url == "http://127.0.0.1:18080"
     assert opened_tunnel is not None
     assert opened_tunnel.target == "i-0123456789abcdef0"
-    assert opened_tunnel.remote_host == "10.0.1.186"
+    assert opened_tunnel.remote_host == "gateway.internal.example"
 
 
 def test_ssm_tunnel_rejects_partial_configuration(monkeypatch) -> None:
@@ -349,7 +349,7 @@ def test_ssm_tunnel_rejects_direct_url_combination(monkeypatch) -> None:
             "--gateway-events-ssm-target",
             "i-0123456789abcdef0",
             "--gateway-events-ssm-host",
-            "10.0.1.186",
+            "gateway.internal.example",
         ]
     )
 

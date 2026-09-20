@@ -2117,8 +2117,8 @@ class GECXConnector(IVendorConnector):
 
     def _initialize_provider_transport(
         self,
-        credentials: Optional[Any],
-        client_options: Optional[Any],
+        credentials: Any | None,
+        client_options: Any | None,
     ) -> None:
         """Create the CES gRPC client used by this connector variant."""
         if credentials:
@@ -2136,8 +2136,8 @@ class GECXConnector(IVendorConnector):
         *,
         conversation_id: str,
         session_path: str,
-        async_response_sink: Optional[Callable[[Dict[str, Any]], bool]],
-        input_acknowledgement_sink: Optional[Callable[[str], None]],
+        async_response_sink: Callable[[dict[str, Any]], bool] | None,
+        input_acknowledgement_sink: Callable[[str], None] | None,
     ) -> GECXStreamingSession:
         """Create one gRPC-backed CES streaming session.
 

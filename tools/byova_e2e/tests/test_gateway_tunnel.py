@@ -14,11 +14,11 @@ from byova_e2e.gateway_tunnel import (
 def test_ssm_command_preserves_values_as_argv_data() -> None:
     config = SSMPortForwardConfig(
         target="i-0123456789abcdef0",
-        remote_host="10.0.1.186",
+        remote_host="gateway.internal.example",
         remote_port=8080,
         local_port=18080,
         region="us-east-1",
-        profile="byova-dev",
+        profile="example-profile",
     )
 
     command = config.command()
@@ -27,7 +27,7 @@ def test_ssm_command_preserves_values_as_argv_data() -> None:
     assert command[command.index("--target") + 1] == "i-0123456789abcdef0"
     parameters = json.loads(command[command.index("--parameters") + 1])
     assert parameters == {
-        "host": ["10.0.1.186"],
+        "host": ["gateway.internal.example"],
         "portNumber": ["8080"],
         "localPortNumber": ["18080"],
     }
@@ -64,7 +64,7 @@ def test_ssm_config_rejects_command_injection_values(
 def test_tunnel_requires_aws_cli_and_session_manager_plugin(monkeypatch) -> None:
     config = SSMPortForwardConfig(
         target="i-0123456789abcdef0",
-        remote_host="10.0.1.186",
+        remote_host="gateway.internal.example",
     )
     monkeypatch.setattr("byova_e2e.gateway_tunnel.shutil.which", lambda _name: None)
 
@@ -75,7 +75,7 @@ def test_tunnel_requires_aws_cli_and_session_manager_plugin(monkeypatch) -> None
 def test_tunnel_rejects_an_occupied_loopback_port(monkeypatch) -> None:
     config = SSMPortForwardConfig(
         target="i-0123456789abcdef0",
-        remote_host="10.0.1.186",
+        remote_host="gateway.internal.example",
     )
     monkeypatch.setattr(
         "byova_e2e.gateway_tunnel.shutil.which", lambda name: f"/usr/bin/{name}"
@@ -91,7 +91,7 @@ def test_tunnel_rejects_an_occupied_loopback_port(monkeypatch) -> None:
 def test_tunnel_starts_without_a_shell_and_is_stopped(monkeypatch) -> None:
     config = SSMPortForwardConfig(
         target="i-0123456789abcdef0",
-        remote_host="10.0.1.186",
+        remote_host="gateway.internal.example",
     )
     captured: dict[str, object] = {}
 
@@ -148,7 +148,7 @@ def test_tunnel_starts_without_a_shell_and_is_stopped(monkeypatch) -> None:
 def test_tunnel_reports_early_process_output(monkeypatch) -> None:
     config = SSMPortForwardConfig(
         target="i-0123456789abcdef0",
-        remote_host="10.0.1.186",
+        remote_host="gateway.internal.example",
     )
 
     class FailedProcess:
@@ -177,7 +177,7 @@ def test_tunnel_reports_early_process_output(monkeypatch) -> None:
 def test_tunnel_timeout_stops_process_and_preserves_cleanup(monkeypatch) -> None:
     config = SSMPortForwardConfig(
         target="i-0123456789abcdef0",
-        remote_host="10.0.1.186",
+        remote_host="gateway.internal.example",
         startup_timeout_seconds=0.01,
     )
     captured: dict[str, object] = {}
