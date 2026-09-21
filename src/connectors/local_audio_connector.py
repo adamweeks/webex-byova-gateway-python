@@ -92,8 +92,9 @@ class LocalAudioConnector(IVendorConnector):
         return "raw_chunk"
 
     def get_input_mode(self, transport: str) -> str:
-        """Accept both voice and DTMF, matching the reference simulator."""
-        del transport
+        """Use DTMF-only WebSocket turns for this deterministic menu connector."""
+        if transport == "websocket":
+            return "INPUT_EVENT_DTMF"
         return "INPUT_VOICE_DTMF"
 
     def get_dtmf_input_config(self, transport: str) -> Dict[str, Any]:
