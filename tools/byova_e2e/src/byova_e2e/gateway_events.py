@@ -46,12 +46,19 @@ class GatewayEventObserver:
         self.expected_transport = expected_transport
         self.expected_agent_id = expected_agent_id
         self._baseline: set[str] | None = None
+        self._baseline_conversation_ids: set[str] = set()
         self._conversation_id: str | None = None
         self._profile_verified = not (expected_transport or expected_agent_id)
 
     def begin(self) -> None:
         """Snapshot existing events before the browser dials."""
-        self._baseline = {self._event_key(event) for event in self._fetch_events()}
+        events = self._fetch_events()
+        self._baseline = {self._event_key(event) for event in events}
+        self._baseline_conversation_ids = {
+            str(event["conversation_id"])
+            for event in events
+            if event.get("conversation_id")
+        }
         self._conversation_id = None
         self._profile_verified = not (self.expected_transport or self.expected_agent_id)
 
@@ -121,7 +128,30 @@ class GatewayEventObserver:
             str(event["conversation_id"])
             for event in events
             if event.get("conversation_id")
-        }
+        } - self._baseline_conversation_ids
+
+        # When the test declares an expected transport or agent, prefer the one
+        # conversation with explicit matching profile evidence. A bounded event
+        # ring can expose the delayed terminal cleanup of an older call alongside
+        # the call just placed by this run; that unrelated conversation must not
+        # make otherwise exact correlation ambiguous.
+        if self.expected_transport is not None or self.expected_agent_id is not None:
+            matching_ids = {
+                str(event["conversation_id"])
+                for event in events
+                if event.get("conversation_id")
+                and str(event["conversation_id"]) not in self._baseline_conversation_ids
+                and self._matches_expected_profile(event)
+            }
+            if len(matching_ids) > 1:
+                raise GatewayEventError(
+                    "Gateway diagnostics exposed multiple new conversations matching "
+                    "the expected transport and agent during the E2E run"
+                )
+            if matching_ids:
+                self._conversation_id = matching_ids.pop()
+                return
+
         if len(conversation_ids) > 1:
             raise GatewayEventError(
                 "Gateway diagnostics exposed multiple new conversations during the "
@@ -129,6 +159,20 @@ class GatewayEventObserver:
             )
         if conversation_ids:
             self._conversation_id = conversation_ids.pop()
+
+    def _matches_expected_profile(self, event: dict[str, Any]) -> bool:
+        """Return whether one event explicitly proves the configured profile."""
+        if (
+            self.expected_transport is not None
+            and event.get("transport") != self.expected_transport
+        ):
+            return False
+        if (
+            self.expected_agent_id is not None
+            and event.get("agent_id") != self.expected_agent_id
+        ):
+            return False
+        return True
 
     def _verify_conversation_profile(self, events: list[dict[str, Any]]) -> None:
         """Require explicit transport/agent evidence for the bound conversation."""

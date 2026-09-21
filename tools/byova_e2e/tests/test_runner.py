@@ -38,6 +38,23 @@ class _Page:
         raise PlaywrightError("navigation lost")
 
 
+class _DialPage:
+    def __init__(self) -> None:
+        self.commands: list[str] = []
+
+    def on(self, *_args) -> None:
+        pass
+
+    def goto(self, *_args, **_kwargs) -> None:
+        pass
+
+    def click(self, *_args, **_kwargs) -> None:
+        pass
+
+    def evaluate(self, _script: str, payload: dict[str, object]) -> None:
+        self.commands.append(str(payload["command"]))
+
+
 class _Context:
     def new_page(self) -> _Page:
         return _Page()
@@ -95,6 +112,47 @@ def test_browser_failure_is_reported_without_masking_cleanup_error(
     with pytest.raises(RunFailure, match="Browser automation failed: navigation lost"):
         runner.run()
 
+    assert server.closed
+
+
+def test_failed_run_ends_call_before_browser_cleanup(tmp_path, monkeypatch) -> None:
+    server = _Server()
+    page = _DialPage()
+    context = _Context()
+    context.new_page = lambda: page
+    browser = _Browser()
+    browser.new_context = lambda **_kwargs: context
+    playwright = _Playwright()
+    playwright.chromium = _Chromium()
+    playwright.chromium.launch = lambda **_kwargs: browser
+
+    @contextmanager
+    def sync_playwright_with_dial_page():
+        yield playwright
+
+    monkeypatch.setattr("byova_e2e.runner.LocalRunServer", lambda *_args: server)
+    monkeypatch.setattr(
+        "byova_e2e.runner.sync_playwright", sync_playwright_with_dial_page
+    )
+    runner = BrowserRunner(tmp_path, _config(tmp_path))
+    monkeypatch.setattr(runner, "_build_frontend", lambda: tmp_path)
+    monkeypatch.setattr(
+        runner,
+        "_wait_for",
+        lambda *_args, **_kwargs: RunEvent("frontend_ready", time.monotonic()),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_wait_for_established",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RunFailure("establishment failed")
+        ),
+    )
+
+    with pytest.raises(RunFailure, match="establishment failed"):
+        runner.run()
+
+    assert page.commands == ["dial", "endCall"]
     assert server.closed
 
 

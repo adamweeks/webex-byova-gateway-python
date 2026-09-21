@@ -66,6 +66,8 @@ class BrowserRunner:
             with sync_playwright() as playwright:
                 browser = None
                 context = None
+                page = None
+                call_cleanup_required = False
                 try:
                     browser = playwright.chromium.launch(
                         headless=self.config.headless,
@@ -93,6 +95,7 @@ class BrowserRunner:
                         server, lambda event: event.name == "frontend_ready", 20
                     )
                     self._command(page, "dial")
+                    call_cleanup_required = True
                     deadline = time.monotonic() + self.config.call_timeout_seconds
                     self._wait_for_established(
                         server,
@@ -121,9 +124,18 @@ class BrowserRunner:
                             injection_finished,
                         )
                     final_reason = str(finish_result["completion_reason"])
+                    call_cleanup_required = False
                 finally:
                     # A crashed browser can make close() fail. Preserve the original
                     # RunFailure so the CLI can write its diagnostic artifact.
+                    if call_cleanup_required and page is not None:
+                        with suppress(RunFailure):
+                            self._command(page, "endCall")
+                            self._wait_for(
+                                server,
+                                lambda event: event.name == "disconnect",
+                                5,
+                            )
                     if context is not None:
                         with suppress(PlaywrightError):
                             context.close()

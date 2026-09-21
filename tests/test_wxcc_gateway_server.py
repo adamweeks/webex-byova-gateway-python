@@ -150,6 +150,23 @@ class TestConversationProcessor:
             connector_sink,
         )
 
+    def test_initial_prompt_preserves_connector_barge_in(
+        self, processor, mock_router
+    ):
+        """Conversation start must not override connector prompt semantics."""
+        mock_router.route_request.return_value = {
+            "message_type": "welcome",
+            "text": "Press 5 to transfer or 6 to end the call.",
+            "audio_content": b"welcome audio",
+            "barge_in_enabled": True,
+        }
+
+        responses = list(processor._start_conversation())
+
+        assert len(responses) == 1
+        assert responses[0].response_type == VoiceVAResponse.ResponseType.FINAL
+        assert responses[0].prompts[0].is_barge_in_enabled is True
+
     def test_initial_escalation_streams_chunk_before_transfer_final(
         self, processor, mock_router
     ):

@@ -215,6 +215,7 @@ def test_local_audio_is_discoverable_and_plays_wav_over_websocket(tmp_path):
             response = await socket.receive_json()
             assert response["type"] == "VOICE_VA_RESPONSE"
             assert response["payload"]["response_type"] == "FINAL"
+            assert response["payload"]["prompts"][0]["is_barge_in_enabled"] is True
             audio = base64.b64decode(
                 response["payload"]["prompts"][0]["audio_content_b64"],
                 validate=True,

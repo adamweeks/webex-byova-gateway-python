@@ -54,6 +54,20 @@ type CallingCall = {
   end: () => void;
   sendDigit: (digit: string) => void;
   getDisconnectReason: () => { code: number; cause: string };
+  mediaConnection?: {
+    mediaConnection?: {
+      transceivers?: {
+        audio?: {
+          sender?: {
+            dtmf?: {
+              canInsertDTMF: boolean;
+              toneBuffer: string;
+            };
+          };
+        };
+      };
+    };
+  };
 };
 
 declare global {
@@ -306,6 +320,8 @@ class CallingMediaClient {
       throw new Error("Cannot send DTMF before call media is established");
     }
     const digit = validateDtmfDigit(request?.digit);
+    const dtmfSender =
+      this.call.mediaConnection?.mediaConnection?.transceivers?.audio?.sender?.dtmf;
     this.call.sendDigit(digit);
     updateStatus("Sent one DTMF control digit.");
     // DTMF values can contain sensitive data. The run artifact proves only
@@ -314,6 +330,9 @@ class CallingMediaClient {
     await report("dtmf_sent", {
       digitCount: 1,
       trigger: request.trigger ?? "scenario_step",
+      rtpDtmfSenderAvailable: Boolean(dtmfSender),
+      rtpDtmfCanInsert: Boolean(dtmfSender?.canInsertDTMF),
+      rtpDtmfQueued: Boolean(dtmfSender?.toneBuffer),
     });
   }
 

@@ -80,7 +80,13 @@ def test_response_maps_audio_events_and_summary_to_json_names():
 def test_raw_chunk_mode_strips_wav_and_adds_empty_final():
     audio = bytes(range(256)) * 30
     response = VoiceVAResponse(
-        prompts=[Prompt(text="Hello", audio_content=_wav(audio))],
+        prompts=[
+            Prompt(
+                text="Hello",
+                audio_content=_wav(audio),
+                is_barge_in_enabled=True,
+            )
+        ],
         response_type=VoiceVAResponse.ResponseType.FINAL,
     )
     payloads = frame_response_payloads(
@@ -97,7 +103,41 @@ def test_raw_chunk_mode_strips_wav_and_adds_empty_final():
         for value in payloads[:-1]
     )
     assert rebuilt == audio
-    assert "prompts" not in payloads[-1]
+    assert payloads[-1]["prompts"] == [
+        {"audio_content_b64": "", "is_barge_in_enabled": True}
+    ]
+
+
+def test_raw_chunk_mode_uses_one_terminator_for_multiple_inline_prompts():
+    response = VoiceVAResponse(
+        prompts=[
+            Prompt(audio_content=b"a" * 100),
+            Prompt(audio_content=b"b" * 100),
+        ],
+        response_type=VoiceVAResponse.ResponseType.FINAL,
+    )
+
+    payloads = frame_response_payloads(
+        response, output_mode="raw_chunk", chunk_size=100
+    )
+
+    assert [
+        base64.b64decode(value["prompts"][0]["audio_content_b64"])
+        for value in payloads[:-1]
+    ] == [b"a" * 100, b"b" * 100]
+    assert payloads[-1]["prompts"] == [
+        {"audio_content_b64": "", "is_barge_in_enabled": False}
+    ]
+
+
+def test_raw_chunk_mode_rejects_mixed_inline_and_uri_audio():
+    response = VoiceVAResponse(
+        prompts=[Prompt(audio_content=b"a" * 100, audio_uri="https://example.test/a")],
+        response_type=VoiceVAResponse.ResponseType.FINAL,
+    )
+
+    with pytest.raises(UnsupportedMediaError, match="cannot mix"):
+        frame_response_payloads(response, output_mode="raw_chunk")
 
 
 def test_wav_final_rejects_raw_audio_and_chunk_responses():

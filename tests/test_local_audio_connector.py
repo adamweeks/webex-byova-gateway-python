@@ -167,7 +167,7 @@ class TestLocalAudioConnector:
         assert response["message_type"] == "welcome"
         assert "welcome to the webex contact center" in response["text"]
         assert response["audio_content"] == b"converted_audio"
-        assert response["barge_in_enabled"] is False
+        assert response["barge_in_enabled"] is True
 
     def test_start_conversation_with_recording_enabled(self, connector):
         """Test conversation start with audio recording enabled."""

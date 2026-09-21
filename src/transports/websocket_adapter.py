@@ -183,6 +183,12 @@ def frame_response_payloads(
         raise ValueError("chunk_size must be between 100 and 65536 bytes")
     payload = response_to_payload(response)
     prompts = payload.get("prompts", [])
+    if any(
+        item.get("audio_content_b64") and item.get("audio_uri") for item in prompts
+    ):
+        raise UnsupportedMediaError(
+            "a prompt cannot mix inline audio and an audio URI"
+        )
     audio_prompts = [item for item in prompts if item.get("audio_content_b64")]
     if output_mode == "wav_final":
         if response.response_type == VoiceVAResponse.ResponseType.CHUNK:
@@ -221,10 +227,24 @@ def frame_response_payloads(
     final_payload = deepcopy(payload)
     final_payload["response_type"] = payload["response_type"]
     final_prompts = []
+    # All inline prompts above are serialized into one ordered CHUNK stream,
+    # so the stream requires exactly one empty-audio FINAL terminator even
+    # when a connector supplied multiple prompt objects.
+    inline_audio_terminated = False
     for item in final_payload.pop("prompts", []):
-        item.pop("audio_content_b64", None)
+        had_inline_audio = "audio_content_b64" in item
         item.pop("text", None)
-        if item.get("audio_uri"):
+        if had_inline_audio and not inline_audio_terminated:
+            # The WxCC chunk contract terminates a stream with a FINAL prompt
+            # whose inline audio value is present but empty.  A prompt-less
+            # FINAL can leave the client in the preceding collection state,
+            # so retain the explicit zero-byte stream terminator used by the
+            # official WebSocket simulator.
+            item["audio_content_b64"] = ""
+            final_prompts.append(item)
+            inline_audio_terminated = True
+        elif item.get("audio_uri"):
+            item.pop("audio_content_b64", None)
             final_prompts.append(item)
     if final_prompts:
         final_payload["prompts"] = final_prompts

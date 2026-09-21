@@ -127,7 +127,10 @@ class LocalAudioConnector(IVendorConnector):
             "conversation_id": conversation_id,
             "agent_id": self.agent_id,
             "message_type": "welcome",
-            "barge_in_enabled": False,  # Disable barge-in for welcome message
+            # WxCC activates caller input collection from the response prompt.
+            # Keep the welcome interruptible so voice and DTMF are accepted on
+            # the first input turn, matching the official simulator contract.
+            "barge_in_enabled": True,
         }
 
     def send_message(self, conversation_id: str, message_data: Dict[str, Any]) -> Iterator[Optional[Dict[str, Any]]]:

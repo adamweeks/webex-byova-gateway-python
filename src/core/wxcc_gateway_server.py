@@ -479,11 +479,12 @@ class ConversationProcessor:
                         f"Audio content size: {len(connector_response.get('audio_content'))}"
                     )
 
-            # Convert response to gRPC format with FINAL response type and disabled barge-in for conversation start
+            # Preserve the connector's prompt semantics for conversation start.
+            # In particular, an interruptible welcome enables WxCC to collect
+            # first-turn voice and DTMF while the prompt is active.
             grpc_response = self._convert_connector_response_to_grpc(
                 connector_response,
                 response_type=VoiceVAResponse.ResponseType.FINAL,
-                barge_in_enabled=False,  # Enable barge-in for conversation start (until server bug is resolved)
             )
 
             self.logger.debug(
