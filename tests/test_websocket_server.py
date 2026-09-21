@@ -102,6 +102,16 @@ async def _wait_for_cleanup(router: FakeRouter) -> None:
     raise AssertionError("provider cleanup did not complete")
 
 
+async def _receive_response_stream(socket) -> list[dict[str, Any]]:
+    """Collect one ordered response stream through its FINAL frame."""
+    frames = []
+    while True:
+        frame = await socket.receive_json()
+        frames.append(frame)
+        if frame["payload"]["response_type"] == "FINAL":
+            return frames
+
+
 def _write_wav(path, audio: bytes = bytes(range(256)) * 4) -> None:
     """Write deterministic PCM audio for Local Audio transport tests."""
     with wave.open(str(path), "wb") as wav_file:
@@ -167,7 +177,7 @@ def test_discovery_uses_shared_router_catalog():
     asyncio.run(scenario())
 
 
-def test_local_audio_is_discoverable_and_plays_wav_over_websocket(tmp_path):
+def test_local_audio_is_discoverable_and_streams_raw_audio_over_websocket(tmp_path):
     """Exercise Local Audio through the real router and WebSocket adapter."""
     welcome_path = tmp_path / "welcome.wav"
     _write_wav(welcome_path)
@@ -212,16 +222,23 @@ def test_local_audio_is_discoverable_and_plays_wav_over_websocket(tmp_path):
                     agent_id="Local Audio: Local Playback",
                 )
             )
-            response = await socket.receive_json()
-            assert response["type"] == "VOICE_VA_RESPONSE"
-            assert response["payload"]["response_type"] == "FINAL"
-            assert response["payload"]["prompts"][0]["is_barge_in_enabled"] is True
-            audio = base64.b64decode(
-                response["payload"]["prompts"][0]["audio_content_b64"],
-                validate=True,
+            responses = await _receive_response_stream(socket)
+            assert all(item["type"] == "VOICE_VA_RESPONSE" for item in responses)
+            assert responses[-1]["payload"]["response_type"] == "FINAL"
+            assert responses[0]["payload"]["prompts"][0][
+                "is_barge_in_enabled"
+            ] is True
+            audio = b"".join(
+                base64.b64decode(
+                    item["payload"]["prompts"][0]["audio_content_b64"],
+                    validate=True,
+                )
+                for item in responses[:-1]
             )
-            assert audio.startswith(b"RIFF")
-            assert audio[8:12] == b"WAVE"
+            assert audio == bytes(range(256)) * 4
+            assert responses[-1]["payload"]["prompts"][0][
+                "audio_content_b64"
+            ] == ""
             await socket.close()
         finally:
             await client.close()
@@ -296,14 +313,20 @@ def test_local_audio_dtmf_works_over_websocket(
                     agent_id="Local Audio: Local Playback",
                 )
             )
-            welcome = await socket.receive_json()
-            assert welcome["type"] == "VOICE_VA_RESPONSE"
+            welcome_frames = await _receive_response_stream(socket)
+            welcome = welcome_frames[-1]
+            assert all(
+                item["type"] == "VOICE_VA_RESPONSE" for item in welcome_frames
+            )
             assert welcome["payload"]["input_mode"] == "INPUT_VOICE_DTMF"
             assert welcome["payload"]["input_handling_config"]["dtmf_config"] == {
-                "inter_digit_timeout_msec": 300,
+                "inter_digit_timeout_msec": 3000,
                 "termchar": "DTMF_DIGIT_POUND",
                 "dtmf_input_length": 1,
             }
+            assert welcome["payload"]["input_handling_config"][
+                "speech_timers"
+            ] == {"no_input_timeout_msec": 30000}
 
             await socket.send_json(
                 {
@@ -321,20 +344,25 @@ def test_local_audio_dtmf_works_over_websocket(
                     },
                 }
             )
-            response = await socket.receive_json()
-            assert response["type"] == "VOICE_VA_RESPONSE"
-            assert response["seq"] == 2
-            assert response["payload"]["response_type"] == "FINAL"
-            assert response["payload"]["prompts"][0]["text"] == expected_text
+            responses = await _receive_response_stream(socket)
+            assert all(item["type"] == "VOICE_VA_RESPONSE" for item in responses)
+            assert [item["seq"] for item in responses] == list(
+                range(responses[0]["seq"], responses[0]["seq"] + len(responses))
+            )
+            assert responses[-1]["payload"]["response_type"] == "FINAL"
+            assert responses[0]["payload"]["prompts"][0]["text"] == expected_text
             assert (
-                response["payload"]["output_events"][0]["event_type"] == expected_event
+                responses[-1]["payload"]["output_events"][0]["event_type"]
+                == expected_event
             )
-            audio = base64.b64decode(
-                response["payload"]["prompts"][0]["audio_content_b64"],
-                validate=True,
+            audio = b"".join(
+                base64.b64decode(
+                    item["payload"]["prompts"][0]["audio_content_b64"],
+                    validate=True,
+                )
+                for item in responses[:-1]
             )
-            assert audio.startswith(b"RIFF")
-            assert audio[8:12] == b"WAVE"
+            assert audio == bytes(reversed(range(256))) * 4
             await socket.close()
         finally:
             await client.close()

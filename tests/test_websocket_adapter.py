@@ -2,6 +2,7 @@
 
 import base64
 import io
+import struct
 import wave
 
 import pytest
@@ -42,6 +43,14 @@ def _wav(audio: bytes) -> bytes:
         wav_file.setframerate(8000)
         wav_file.writeframes(audio)
     return output.getvalue()
+
+
+def _mulaw_wav(audio: bytes) -> bytes:
+    """Build a mono 8 kHz G.711 mu-law WAV without decoding the payload."""
+    fmt = struct.pack("<HHIIHH", 7, 1, 8000, 8000, 1, 8)
+    chunks = b"fmt " + struct.pack("<I", len(fmt)) + fmt
+    chunks += b"data" + struct.pack("<I", len(audio)) + audio
+    return b"RIFF" + struct.pack("<I", len(chunks) + 4) + b"WAVE" + chunks
 
 
 def test_request_maps_to_existing_protobuf_contract():
@@ -106,6 +115,42 @@ def test_raw_chunk_mode_strips_wav_and_adds_empty_final():
     assert payloads[-1]["prompts"] == [
         {"audio_content_b64": "", "is_barge_in_enabled": True}
     ]
+
+
+def test_raw_chunk_mode_preserves_mulaw_wav_payload():
+    audio = bytes(range(256)) * 30
+    response = VoiceVAResponse(
+        prompts=[Prompt(audio_content=_mulaw_wav(audio))],
+        response_type=VoiceVAResponse.ResponseType.FINAL,
+    )
+
+    payloads = frame_response_payloads(
+        response, output_mode="raw_chunk", chunk_size=3200
+    )
+
+    rebuilt = b"".join(
+        base64.b64decode(value["prompts"][0]["audio_content_b64"])
+        for value in payloads[:-1]
+    )
+    assert rebuilt == audio
+    assert payloads[-1]["response_type"] == "FINAL"
+
+
+@pytest.mark.parametrize(
+    "audio",
+    [
+        b"RIFF\x10\x00\x00\x00WAVEdata\x08\x00\x00\x00short",
+        b"RIFF\x04\x00\x00\x00WAVE",
+    ],
+)
+def test_raw_chunk_mode_rejects_malformed_wav_chunks(audio):
+    response = VoiceVAResponse(
+        prompts=[Prompt(audio_content=audio)],
+        response_type=VoiceVAResponse.ResponseType.FINAL,
+    )
+
+    with pytest.raises(UnsupportedMediaError, match="invalid WAV"):
+        frame_response_payloads(response, output_mode="raw_chunk")
 
 
 def test_raw_chunk_mode_uses_one_terminator_for_multiple_inline_prompts():

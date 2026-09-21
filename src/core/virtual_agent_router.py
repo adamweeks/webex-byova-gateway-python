@@ -287,6 +287,26 @@ class VirtualAgentRouter:
             )
         return mode
 
+    def get_input_mode(self, agent_id: str, transport: str) -> str:
+        """Get and validate a connector's transport-specific input mode."""
+        normalized_transport = self._normalize_transport(transport)
+        connector = self.get_connector_for_agent(
+            agent_id, transport=normalized_transport
+        )
+        mode = connector.get_input_mode(normalized_transport)
+        allowed = {
+            "INPUT_VOICE_MODE_UNSPECIFIED",
+            "INPUT_VOICE",
+            "INPUT_EVENT_DTMF",
+            "INPUT_VOICE_DTMF",
+        }
+        if mode not in allowed:
+            raise ValueError(
+                f"Connector for agent '{agent_id}' returned invalid input mode: "
+                f"{mode!r}"
+            )
+        return mode
+
     def should_observe_speech_boundaries(
         self, agent_id: str, conversation_id: str
     ) -> bool:

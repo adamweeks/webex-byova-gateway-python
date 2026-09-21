@@ -54,6 +54,11 @@ class IVendorConnector(ABC):
         """
         return "raw_chunk"
 
+    def get_input_mode(self, transport: str) -> str:
+        """Return the WxCC input collection mode for one gateway transport."""
+        del transport
+        return "INPUT_VOICE_DTMF"
+
     def should_observe_speech_boundaries(self, conversation_id: str) -> bool:
         """Return whether gateway VAD should observe this conversation's frames."""
         del conversation_id

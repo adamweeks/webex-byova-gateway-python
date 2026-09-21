@@ -17,6 +17,7 @@ from src.core.wxcc_gateway_server import ConversationProcessor, WxCCGatewayServe
 from src.generated.byova_common_pb2 import EventInput
 from src.generated.voicevirtualagent_pb2 import (
     VoiceInput,
+    VoiceVAInputMode,
     VoiceVARequest,
     VoiceVAResponse,
 )
@@ -31,6 +32,7 @@ class TestConversationProcessor:
         """Create a mock router for testing."""
         router = MagicMock(spec=VirtualAgentRouter)
         router.should_coalesce_speech_end_with_response.return_value = False
+        router.get_input_mode.return_value = "INPUT_VOICE_DTMF"
         return router
 
     @pytest.fixture
@@ -166,6 +168,19 @@ class TestConversationProcessor:
         assert len(responses) == 1
         assert responses[0].response_type == VoiceVAResponse.ResponseType.FINAL
         assert responses[0].prompts[0].is_barge_in_enabled is True
+
+    def test_error_response_falls_back_when_connector_input_mode_is_invalid(
+        self, processor, mock_router
+    ):
+        """A broken capability hook must not prevent a graceful error response."""
+        mock_router.get_input_mode.return_value = "INVALID_MODE"
+
+        response = processor._create_error_response("provider failed")
+
+        assert response.response_type == VoiceVAResponse.ResponseType.FINAL
+        assert response.prompts[0].text.endswith("provider failed")
+        assert response.input_mode == VoiceVAInputMode.INPUT_VOICE_DTMF
+        assert response.input_handling_config.dtmf_config.dtmf_input_length == 1
 
     def test_initial_escalation_streams_chunk_before_transfer_final(
         self, processor, mock_router

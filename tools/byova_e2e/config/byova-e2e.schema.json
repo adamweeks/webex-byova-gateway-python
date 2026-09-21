@@ -220,6 +220,14 @@
         "digit": {
           "type": "string",
           "pattern": "^[0-9A-D*#]$"
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 40,
+          "maximum": 6000
+        },
+        "terminate": {
+          "type": "boolean"
         }
       }
     },

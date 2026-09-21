@@ -298,6 +298,12 @@ class BrowserRunner:
 
             if isinstance(step, RunDtmfAction):
                 if first_action:
+                    self._wait_for_gateway_conversation(
+                        self._bounded_timeout(
+                            self.config.prompt_timeout_seconds,
+                            call_deadline,
+                        )
+                    )
                     trigger = self._wait_for_prompt_end(server, call_deadline)
                     first_action = False
                 else:
@@ -305,7 +311,12 @@ class BrowserRunner:
                 self._command(
                     page,
                     "sendDtmf",
-                    {"digit": step.digit, "trigger": trigger},
+                    {
+                        "digit": step.digit,
+                        "trigger": trigger,
+                        "durationMs": step.duration_ms,
+                        "terminate": step.terminate,
+                    },
                 )
                 last_input, events_during_injection = self._wait_for_dtmf_sent(
                     server,
@@ -317,7 +328,9 @@ class BrowserRunner:
                         "kind": "action",
                         "name": step.name,
                         "input": "dtmf",
-                        "digit_count": 1,
+                        "digit_count": 1 + int(step.terminate),
+                        "duration_ms": step.duration_ms,
+                        "terminated": step.terminate,
                         "finished_timestamp": last_input.timestamp,
                     }
                 )
@@ -442,6 +455,15 @@ class BrowserRunner:
             return None
         try:
             return self._gateway_events.assert_outcome(expected, timeout_seconds)
+        except GatewayEventError as error:
+            raise RunFailure(str(error), list(self.events)) from error
+
+    def _wait_for_gateway_conversation(self, timeout_seconds: float) -> None:
+        """Ensure DTMF is not sent during media that precedes the virtual agent."""
+        if self._gateway_events is None:
+            return
+        try:
+            self._gateway_events.wait_for_conversation(timeout_seconds)
         except GatewayEventError as error:
             raise RunFailure(str(error), list(self.events)) from error
 

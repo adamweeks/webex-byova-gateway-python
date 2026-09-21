@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import base64
-import io
-import wave
+import struct
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Iterable
@@ -139,6 +138,13 @@ def response_to_payload(response: VoiceVAResponse) -> dict[str, Any]:
             preserving_proto_field_name=True,
             use_integers_for_enums=False,
         )
+        # WebSocket and gRPC have separate schemas. The WebSocket contract's
+        # supported no-input timer is not present in the gRPC proto reused by
+        # the conversation engine, so add it only at this wire boundary.
+        if payload.get("input_mode") in {"INPUT_EVENT_DTMF", "INPUT_VOICE_DTMF"}:
+            payload["input_handling_config"]["speech_timers"] = {
+                "no_input_timeout_msec": 30000
+            }
     transcript = _text_content(response.session_transcript)
     if transcript:
         payload["session_transcript"] = transcript
@@ -149,11 +155,36 @@ def response_to_payload(response: VoiceVAResponse) -> dict[str, Any]:
 
 
 def _wav_frames(audio: bytes) -> bytes:
-    try:
-        with wave.open(io.BytesIO(audio), "rb") as wav_file:
-            return wav_file.readframes(wav_file.getnframes())
-    except (wave.Error, EOFError) as error:
-        raise UnsupportedMediaError("invalid WAV response audio") from error
+    """Return the encoded bytes in a RIFF/WAVE data chunk.
+
+    Python's :mod:`wave` reader accepts only PCM and a narrow set of
+    extensible encodings.  WxCC-compatible Local Audio files can use G.711
+    mu-law (format tag 7), and raw WebSocket framing must preserve those bytes
+    rather than decode them.  Parse the RIFF container directly and leave the
+    media payload untouched.
+    """
+
+    if len(audio) < 12 or audio[:4] != b"RIFF" or audio[8:12] != b"WAVE":
+        raise UnsupportedMediaError("invalid WAV response audio")
+
+    riff_size = struct.unpack_from("<I", audio, 4)[0]
+    if riff_size + 8 > len(audio):
+        raise UnsupportedMediaError("invalid WAV response audio")
+
+    offset = 12
+    riff_end = min(riff_size + 8, len(audio))
+    while offset + 8 <= riff_end:
+        chunk_id = audio[offset : offset + 4]
+        chunk_size = struct.unpack_from("<I", audio, offset + 4)[0]
+        data_start = offset + 8
+        data_end = data_start + chunk_size
+        if data_end > riff_end:
+            raise UnsupportedMediaError("invalid WAV response audio")
+        if chunk_id == b"data":
+            return audio[data_start:data_end]
+        offset = data_end + (chunk_size & 1)
+
+    raise UnsupportedMediaError("invalid WAV response audio")
 
 
 def _chunks(audio: bytes, chunk_size: int) -> Iterable[bytes]:

@@ -314,6 +314,7 @@ class WebSocketGatewayServer:
                 self.router,
                 self.vad_config,
                 self.terminal_flush_timeout_seconds,
+                transport="websocket",
             )
             with self._processors_lock:
                 self._processors[lease.key] = processor
@@ -349,6 +350,26 @@ class WebSocketGatewayServer:
                     output_mode=output_mode,
                     chunk_size=self.output_chunk_bytes,
                 )
+                if response.response_type != VoiceVAResponse.ResponseType.CHUNK:
+                    final_payload = payloads[-1]
+                    input_config = final_payload.get("input_handling_config", {})
+                    dtmf_config = input_config.get("dtmf_config", {})
+                    speech_timers = input_config.get("speech_timers", {})
+                    self.logger.info(
+                        "websocket_voice_response_queued conversation_id=%s "
+                        "agent_id=%s output_mode=%s response_type=%s frames=%d "
+                        "input_mode=%s dtmf_length=%s no_input_timeout_msec=%s",
+                        lease.conversation_id,
+                        agent_id,
+                        output_mode,
+                        final_payload.get("response_type", "unspecified"),
+                        len(payloads),
+                        final_payload.get("input_mode", "unspecified"),
+                        dtmf_config.get("dtmf_input_length", "unspecified"),
+                        speech_timers.get(
+                            "no_input_timeout_msec", "unspecified"
+                        ),
+                    )
                 for payload in payloads:
                     await enqueue_outbound(_Outbound("VOICE_VA_RESPONSE", payload))
                 for output_event in self._terminal_events(response):

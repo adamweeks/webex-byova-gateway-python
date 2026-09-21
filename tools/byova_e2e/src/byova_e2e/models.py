@@ -40,6 +40,8 @@ class RunDtmfAction:
 
     digit: str
     name: str | None = None
+    duration_ms: int | None = None
+    terminate: bool = False
 
 
 @dataclass(frozen=True)

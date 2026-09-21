@@ -88,8 +88,12 @@ class LocalAudioConnector(IVendorConnector):
         return frozenset({"grpc", "websocket"})
 
     def get_websocket_output_mode(self) -> str:
-        """Local test prompts are complete WAV files."""
-        return "wav_final"
+        """Stream local prompts as raw WebSocket audio chunks."""
+        return "raw_chunk"
+
+    def get_input_mode(self, transport: str) -> str:
+        """Keep caller audio streaming while also collecting DTMF controls."""
+        return "INPUT_VOICE_DTMF"
 
     def start_conversation(
         self, conversation_id: str, request_data: Dict[str, Any]

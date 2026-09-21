@@ -219,14 +219,21 @@ def test_loads_single_digit_dtmf_action_and_gateway_profile(tmp_path: Path) -> N
             }
         },
         steps=[
-            {"action": "dtmf", "digit": "5"},
+            {
+                "action": "dtmf",
+                "digit": "5",
+                "durationMs": 500,
+                "terminate": True,
+            },
             {"expect": {"outcome": "transfer"}},
         ],
     )
 
     selected_test = load_test("sample", path)
 
-    assert selected_test.steps[0] == InputStepDefinition(dtmf_digit="5")
+    assert selected_test.steps[0] == InputStepDefinition(
+        dtmf_digit="5", dtmf_duration_ms=500, dtmf_terminate=True
+    )
     assert selected_test.expected_gateway_transport == "websocket"
     assert selected_test.expected_gateway_agent_id == "Local Audio: Local Playback"
 
@@ -244,6 +251,37 @@ def test_rejects_invalid_or_multi_digit_dtmf_actions(
     )
 
     with pytest.raises(PlanError, match="digit must be exactly one"):
+        load_test("sample", path)
+
+
+@pytest.mark.parametrize("duration_ms", [39, 6001, 100.5, "500", True])
+def test_rejects_invalid_dtmf_duration(tmp_path: Path, duration_ms: object) -> None:
+    path = _write_plan(
+        tmp_path,
+        steps=[
+            {"action": "dtmf", "digit": "5", "durationMs": duration_ms},
+            {"expect": {"outcome": "transfer"}},
+        ],
+    )
+
+    with pytest.raises(PlanError, match="durationMs"):
+        load_test("sample", path)
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        {"action": "dtmf", "digit": "5", "terminate": "true"},
+        {"action": "dtmf", "digit": "#", "terminate": True},
+    ],
+)
+def test_rejects_invalid_dtmf_terminator(tmp_path: Path, step: dict) -> None:
+    path = _write_plan(
+        tmp_path,
+        steps=[step, {"expect": {"outcome": "transfer"}}],
+    )
+
+    with pytest.raises(PlanError, match="terminate"):
         load_test("sample", path)
 
 

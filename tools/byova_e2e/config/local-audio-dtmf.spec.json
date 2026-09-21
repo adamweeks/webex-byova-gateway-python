@@ -3,8 +3,8 @@
   "version": 1,
   "use": {
     "headless": true,
-    "remoteSilenceMs": 1000,
-    "remotePromptOccurrence": 2,
+    "remoteSilenceMs": 3000,
+    "remotePromptOccurrence": 1,
     "promptTimeoutSeconds": 60,
     "callTimeoutSeconds": 120,
     "responseTimeoutSeconds": 30,

@@ -118,6 +118,49 @@ class GatewayEventObserver:
             )
         return None
 
+    def wait_for_conversation(self, timeout_seconds: float) -> dict[str, Any]:
+        """Wait until one new conversation matches the configured gateway profile."""
+        if self._baseline is None:
+            raise GatewayEventError("Gateway event observation was not started")
+
+        deadline = time.monotonic() + max(0.0, timeout_seconds)
+        while True:
+            new_events = [
+                event
+                for event in self._fetch_events()
+                if self._event_key(event) not in self._baseline
+            ]
+            self._bind_conversation(new_events)
+            self._verify_conversation_profile(new_events)
+            if self._conversation_id is not None and self._profile_verified:
+                matching = [
+                    event
+                    for event in new_events
+                    if event.get("conversation_id") == self._conversation_id
+                    and self._matches_expected_profile(event)
+                ]
+                if matching:
+                    return self._artifact_event(matching[0])
+
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(
+                min(
+                    self.poll_interval_seconds,
+                    max(0.0, deadline - time.monotonic()),
+                )
+            )
+
+        if self._conversation_id is None:
+            raise GatewayEventError(
+                "Gateway diagnostics did not expose the E2E conversation before "
+                "caller input"
+            )
+        raise GatewayEventError(
+            "Gateway diagnostics did not prove the expected transport and agent "
+            f"for conversation {self._conversation_id} before caller input"
+        )
+
     def _bind_conversation(self, events: list[dict[str, Any]]) -> None:
         if self._conversation_id is not None:
             return

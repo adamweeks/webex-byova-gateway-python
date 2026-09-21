@@ -177,6 +177,13 @@ class _GatewayObserver:
         self.result = result
         self.error = error
         self.calls: list[tuple[ExpectedOutcome, float]] = []
+        self.wait_calls: list[float] = []
+
+    def wait_for_conversation(self, timeout_seconds):
+        self.wait_calls.append(timeout_seconds)
+        if self.error is not None:
+            raise self.error
+        return {"event_type": "start", "conversation_id": "conversation-1"}
 
     def assert_outcome(self, expected, timeout_seconds):
         self.calls.append((expected, timeout_seconds))
@@ -272,7 +279,10 @@ def test_executes_dtmf_action_without_exposing_digit_in_result(
         audio_path=None,
         audio_sha256=None,
         audio_duration_seconds=None,
-        steps=(RunDtmfAction(digit), RunExpectation(outcome)),
+        steps=(
+            RunDtmfAction(digit, duration_ms=500, terminate=True),
+            RunExpectation(outcome),
+        ),
         response_timeout_seconds=1,
         remote_silence_seconds=0,
     )
@@ -301,12 +311,20 @@ def test_executes_dtmf_action_without_exposing_digit_in_result(
 
     assert page.commands[0] == {
         "command": "sendDtmf",
-        "argument": {"digit": digit, "trigger": "remote_prompt"},
+        "argument": {
+            "digit": digit,
+            "trigger": "remote_prompt",
+            "durationMs": 500,
+            "terminate": True,
+        },
     }
     action_result = result["steps"][0]
     assert action_result["input"] == "dtmf"
-    assert action_result["digit_count"] == 1
-    assert digit not in str(action_result)
+    assert action_result["digit_count"] == 2
+    assert action_result["duration_ms"] == 500
+    assert action_result["terminated"] is True
+    assert "digit" not in action_result
+    assert len(runner._gateway_events.wait_calls) == 1
 
 
 def test_injects_second_utterance_after_response_audio_starts(tmp_path) -> None:

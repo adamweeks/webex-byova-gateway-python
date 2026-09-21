@@ -20,6 +20,26 @@ type InjectionRequest = {
 type DtmfRequest = {
   digit: string;
   trigger?: string;
+  durationMs?: number;
+  terminate?: boolean;
+};
+
+type DtmfToneChangeEvent = {
+  tone: string;
+};
+
+type DtmfSender = {
+  canInsertDTMF: boolean;
+  toneBuffer: string;
+  addEventListener?: (
+    name: "tonechange",
+    callback: (event: DtmfToneChangeEvent) => void,
+  ) => void;
+  removeEventListener?: (
+    name: "tonechange",
+    callback: (event: DtmfToneChangeEvent) => void,
+  ) => void;
+  insertDTMF?: (tones: string, duration?: number, interToneGap?: number) => void;
 };
 
 type CallingLine = {
@@ -55,14 +75,12 @@ type CallingCall = {
   sendDigit: (digit: string) => void;
   getDisconnectReason: () => { code: number; cause: string };
   mediaConnection?: {
+    insertDTMF?: (tones: string, duration?: number, interToneGap?: number) => void;
     mediaConnection?: {
       transceivers?: {
         audio?: {
           sender?: {
-            dtmf?: {
-              canInsertDTMF: boolean;
-              toneBuffer: string;
-            };
+            dtmf?: DtmfSender;
           };
         };
       };
@@ -320,15 +338,45 @@ class CallingMediaClient {
       throw new Error("Cannot send DTMF before call media is established");
     }
     const digit = validateDtmfDigit(request?.digit);
+    const durationMs = request?.durationMs ?? undefined;
+    const terminate = request?.terminate === true;
+    if (
+      durationMs !== undefined &&
+      (!Number.isInteger(durationMs) || durationMs < 40 || durationMs > 6000)
+    ) {
+      throw new Error("DTMF duration must be an integer between 40 and 6000 milliseconds");
+    }
     const dtmfSender =
       this.call.mediaConnection?.mediaConnection?.transceivers?.audio?.sender?.dtmf;
-    this.call.sendDigit(digit);
+    let toneStarted = false;
+    const tones = terminate ? `${digit}#` : digit;
+    const onToneChange = (event: DtmfToneChangeEvent): void => {
+      if (event.tone) {
+        toneStarted = true;
+        void report("dtmf_tone_started", { digitCount: 1 });
+        return;
+      }
+      dtmfSender?.removeEventListener?.("tonechange", onToneChange);
+      void report("dtmf_tone_completed", { digitCount: 1, toneStarted });
+    };
+    dtmfSender?.addEventListener?.("tonechange", onToneChange);
+    if (durationMs === undefined) {
+      this.call.sendDigit(tones);
+    } else if (this.call.mediaConnection?.insertDTMF) {
+      this.call.mediaConnection.insertDTMF(tones, durationMs);
+    } else if (dtmfSender?.insertDTMF) {
+      dtmfSender.insertDTMF(tones, durationMs);
+    } else {
+      throw new Error("Cannot set explicit DTMF duration on this Calling SDK session");
+    }
     updateStatus("Sent one DTMF control digit.");
     // DTMF values can contain sensitive data. The run artifact proves only
     // that one allowlisted digit was submitted; the configured terminal
     // gateway outcome proves which control flow executed.
     await report("dtmf_sent", {
-      digitCount: 1,
+      digitCount: tones.length,
+      durationMs,
+      terminated: terminate,
       trigger: request.trigger ?? "scenario_step",
       rtpDtmfSenderAvailable: Boolean(dtmfSender),
       rtpDtmfCanInsert: Boolean(dtmfSender?.canInsertDTMF),

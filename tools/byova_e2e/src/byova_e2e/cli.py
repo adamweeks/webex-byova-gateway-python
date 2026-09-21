@@ -455,7 +455,12 @@ def _run(args: argparse.Namespace) -> None:
                 if isinstance(step, InputStepDefinition):
                     if step.dtmf_digit is not None:
                         run_steps.append(
-                            RunDtmfAction(digit=step.dtmf_digit, name=step.name)
+                            RunDtmfAction(
+                                digit=step.dtmf_digit,
+                                name=step.name,
+                                duration_ms=step.dtmf_duration_ms,
+                                terminate=step.dtmf_terminate,
+                            )
                         )
                         continue
                     prepared_step, profile = _prepare_input_step(

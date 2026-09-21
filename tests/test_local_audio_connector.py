@@ -152,7 +152,9 @@ class TestLocalAudioConnector:
         assert connector.get_supported_transports() == frozenset(
             {"grpc", "websocket"}
         )
-        assert connector.get_websocket_output_mode() == "wav_final"
+        assert connector.get_websocket_output_mode() == "raw_chunk"
+        assert connector.get_input_mode("grpc") == "INPUT_VOICE_DTMF"
+        assert connector.get_input_mode("websocket") == "INPUT_VOICE_DTMF"
 
     def test_start_conversation_success(self, connector, temp_audio_dir):
         """Test successful conversation start."""

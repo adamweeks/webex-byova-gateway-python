@@ -45,6 +45,8 @@ class InputStepDefinition:
     wav: Path | None = None
     segment_pause_ms: int | None = None
     dtmf_digit: str | None = None
+    dtmf_duration_ms: int | None = None
+    dtmf_terminate: bool = False
 
 
 @dataclass(frozen=True)
@@ -250,7 +252,17 @@ def _parse_input_step(
     step = _object(raw, location)
     _reject_unknown(
         step,
-        {"name", "action", "text", "segments", "pauseMs", "path", "digit"},
+        {
+            "name",
+            "action",
+            "text",
+            "segments",
+            "pauseMs",
+            "path",
+            "digit",
+            "durationMs",
+            "terminate",
+        },
         location,
     )
     name = _optional_nonempty_string(step.get("name"), f"{location}.name")
@@ -304,14 +316,41 @@ def _parse_input_step(
     if action == "dtmf":
         if any(field in step for field in ("text", "segments", "pauseMs", "path")):
             raise TestPlanError(
-                f"{location} with action 'dtmf' only accepts name, action, and digit"
+                f"{location} with action 'dtmf' only accepts name, action, digit, "
+                "durationMs, and terminate"
             )
+        _reject_unknown(
+            step,
+            {"name", "action", "digit", "durationMs", "terminate"},
+            location,
+        )
         digit = step.get("digit")
         if not isinstance(digit, str) or not DTMF_DIGIT_PATTERN.fullmatch(digit):
             raise TestPlanError(
                 f"{location}.digit must be exactly one of 0-9, A-D, *, or #"
             )
-        return InputStepDefinition(name=name, dtmf_digit=digit)
+        duration_ms = step.get("durationMs")
+        if duration_ms is not None:
+            duration_ms = _positive_integer(
+                duration_ms, f"{location}.durationMs"
+            )
+            if not 40 <= duration_ms <= 6000:
+                raise TestPlanError(
+                    f"{location}.durationMs must be between 40 and 6000"
+                )
+        terminate = step.get("terminate", False)
+        if not isinstance(terminate, bool):
+            raise TestPlanError(f"{location}.terminate must be a boolean")
+        if terminate and digit == "#":
+            raise TestPlanError(
+                f"{location}.terminate cannot be true when digit is already #"
+            )
+        return InputStepDefinition(
+            name=name,
+            dtmf_digit=digit,
+            dtmf_duration_ms=duration_ms,
+            dtmf_terminate=terminate,
+        )
     raise TestPlanError(f"{location}.action must be 'speak', 'play', or 'dtmf'")
 
 

@@ -82,6 +82,47 @@ def test_transfer_is_proven_by_exact_gateway_terminal_event() -> None:
     assert observer.endpoint == "http://127.0.0.1:8080/api/connections"
 
 
+def test_wait_for_conversation_returns_matching_profile_evidence() -> None:
+    start = {
+        **_start(),
+        "transport": "websocket",
+        "agent_id": "Local Audio: Local Playback",
+    }
+    observer = GatewayEventObserver(
+        "http://127.0.0.1:8080",
+        poll_interval_seconds=0,
+        fetch_events=_Snapshots([], [start]),
+        expected_transport="websocket",
+        expected_agent_id="Local Audio: Local Playback",
+    )
+    observer.begin()
+
+    event = observer.wait_for_conversation(0)
+
+    assert event == {
+        "event_type": "start",
+        "conversation_id": "conversation-1",
+        "agent_id": "Local Audio: Local Playback",
+        "timestamp": 10.0,
+        "transport": "websocket",
+    }
+
+
+def test_wait_for_conversation_requires_new_gateway_conversation() -> None:
+    observer = GatewayEventObserver(
+        "http://127.0.0.1:8080",
+        poll_interval_seconds=0,
+        fetch_events=_Snapshots([], []),
+    )
+    observer.begin()
+
+    with pytest.raises(
+        GatewayEventError,
+        match="did not expose the E2E conversation before caller input",
+    ):
+        observer.wait_for_conversation(0)
+
+
 def test_session_end_rejects_transfer_gateway_outcome() -> None:
     snapshots = _Snapshots([], [_start(), _terminal("TRANSFER_TO_AGENT")])
     observer = GatewayEventObserver(

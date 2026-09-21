@@ -73,10 +73,12 @@ class ConversationProcessor:
         router: VirtualAgentRouter,
         vad_config: Optional[Dict[str, Any]] = None,
         max_terminal_playback_seconds: float = 30.0,
+        transport: str = "grpc",
     ):
         self.conversation_id = conversation_id
         self.virtual_agent_id = virtual_agent_id
         self.router = router
+        self.transport = transport
         self.logger = logging.getLogger(
             f"{__name__}.ConversationProcessor.{conversation_id}"
         )
@@ -135,8 +137,44 @@ class ConversationProcessor:
         )
 
         self.logger.info(
-            f"Created conversation processor for {conversation_id} with agent {virtual_agent_id}"
+            "Created conversation processor for %s with agent %s over %s",
+            conversation_id,
+            virtual_agent_id,
+            transport,
         )
+
+    def _configure_next_input(self, response: VoiceVAResponse) -> None:
+        """Apply connector input collection semantics for this transport."""
+        capability = getattr(self.router, "get_input_mode", None)
+        input_mode_name = (
+            capability(self.virtual_agent_id, self.transport)
+            if callable(capability)
+            else "INPUT_VOICE_DTMF"
+        )
+        if not isinstance(input_mode_name, str):
+            input_mode_name = "INPUT_VOICE_DTMF"
+        self._apply_input_configuration(response, input_mode_name)
+
+    def _apply_input_configuration(
+        self, response: VoiceVAResponse, input_mode_name: str
+    ) -> None:
+        """Apply one validated input mode and the shared DTMF collection policy."""
+        response.input_mode = VoiceVAInputMode.Value(input_mode_name)
+        input_config = InputHandlingConfig(
+            dtmf_config=DTMFInputConfig(
+                dtmf_input_length=1,
+                inter_digit_timeout_msec=3000,
+                termchar=DTMFDigits.DTMF_DIGIT_POUND,
+            )
+        )
+        # The WebSocket schema reserves these gRPC speech completion timers.
+        # Its separate no_input_timeout_msec field does not exist in this proto
+        # and is added by the WebSocket wire adapter at the transport boundary.
+        if self.transport != "websocket":
+            input_config.speech_timers.CopyFrom(
+                InputSpeechTimers(complete_timeout_msec=5000)
+            )
+        response.input_handling_config.CopyFrom(input_config)
 
     def set_stream_cancel_event(self, cancel_event: threading.Event) -> None:
         """Attach the cancellation signal for the active WxCC request stream."""
@@ -1036,7 +1074,7 @@ class ConversationProcessor:
                         InputHandlingConfig(
                             dtmf_config=DTMFInputConfig(
                                 dtmf_input_length=1,
-                                inter_digit_timeout_msec=300,
+                                inter_digit_timeout_msec=3000,
                                 termchar=DTMFDigits.DTMF_DIGIT_POUND,
                             ),
                             speech_timers=InputSpeechTimers(complete_timeout_msec=5000),
@@ -1050,17 +1088,7 @@ class ConversationProcessor:
                         else VoiceVAResponse.ResponseType.FINAL
                     )
                     va_response.response_type = final_response_type
-                    va_response.input_mode = VoiceVAInputMode.INPUT_VOICE_DTMF
-                    va_response.input_handling_config.CopyFrom(
-                        InputHandlingConfig(
-                            dtmf_config=DTMFInputConfig(
-                                dtmf_input_length=1,
-                                inter_digit_timeout_msec=300,
-                                termchar=DTMFDigits.DTMF_DIGIT_POUND,
-                            ),
-                            speech_timers=InputSpeechTimers(complete_timeout_msec=5000),
-                        )
-                    )
+                    self._configure_next_input(va_response)
 
                 # Handle output events for silence responses before returning
                 if connector_response and "output_events" in connector_response:
@@ -1290,17 +1318,7 @@ class ConversationProcessor:
             else:
                 # Set the next input mode and handling configuration only while
                 # the virtual-agent session is still active.
-                va_response.input_mode = VoiceVAInputMode.INPUT_VOICE_DTMF
-                va_response.input_handling_config.CopyFrom(
-                    InputHandlingConfig(
-                        dtmf_config=DTMFInputConfig(
-                            dtmf_input_length=1,
-                            inter_digit_timeout_msec=300,
-                            termchar=DTMFDigits.DTMF_DIGIT_POUND,
-                        ),
-                        speech_timers=InputSpeechTimers(complete_timeout_msec=5000),
-                    )
-                )
+                self._configure_next_input(va_response)
 
             self.logger.debug(
                 f"Final gRPC response created with {len(va_response.prompts)} prompts"
@@ -1350,20 +1368,20 @@ class ConversationProcessor:
         # Set response type
         va_response.response_type = VoiceVAResponse.ResponseType.FINAL
 
-        # Set input mode
-        va_response.input_mode = VoiceVAInputMode.INPUT_VOICE_DTMF
-
-        # Set input handling configuration
-        va_response.input_handling_config.CopyFrom(
-            InputHandlingConfig(
-                dtmf_config=DTMFInputConfig(
-                    dtmf_input_length=1,
-                    inter_digit_timeout_msec=300,
-                    termchar=DTMFDigits.DTMF_DIGIT_POUND,
-                ),
-                speech_timers=InputSpeechTimers(complete_timeout_msec=5000),
+        try:
+            self._configure_next_input(va_response)
+        except Exception as error:
+            # Error rendering must remain reliable even when a connector has
+            # disappeared or advertises an invalid input capability.  The
+            # literal fallback is schema-valid and cannot invoke connector
+            # code again.
+            self.logger.warning(
+                "Falling back to default input configuration while rendering "
+                "an error response for conversation %s: %s",
+                self.conversation_id,
+                error,
             )
-        )
+            self._apply_input_configuration(va_response, "INPUT_VOICE_DTMF")
 
         self.logger.debug(
             f"Sending error response for conversation {self.conversation_id}"
