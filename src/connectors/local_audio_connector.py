@@ -92,7 +92,9 @@ class LocalAudioConnector(IVendorConnector):
         return "raw_chunk"
 
     def get_input_mode(self, transport: str) -> str:
-        """Keep caller audio streaming while also collecting DTMF controls."""
+        """Collect menu digits as WebSocket events and retain gRPC voice input."""
+        if transport == "websocket":
+            return "INPUT_EVENT_DTMF"
         return "INPUT_VOICE_DTMF"
 
     def start_conversation(

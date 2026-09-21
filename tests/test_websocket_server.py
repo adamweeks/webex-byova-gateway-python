@@ -318,7 +318,7 @@ def test_local_audio_dtmf_works_over_websocket(
             assert all(
                 item["type"] == "VOICE_VA_RESPONSE" for item in welcome_frames
             )
-            assert welcome["payload"]["input_mode"] == "INPUT_VOICE_DTMF"
+            assert welcome["payload"]["input_mode"] == "INPUT_EVENT_DTMF"
             assert welcome["payload"]["input_handling_config"]["dtmf_config"] == {
                 "inter_digit_timeout_msec": 3000,
                 "termchar": "DTMF_DIGIT_POUND",
