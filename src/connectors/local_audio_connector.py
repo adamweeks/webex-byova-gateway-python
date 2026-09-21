@@ -97,10 +97,10 @@ class LocalAudioConnector(IVendorConnector):
         return "INPUT_VOICE_DTMF"
 
     def get_dtmf_input_config(self, transport: str) -> Dict[str, Any]:
-        """Use the reference WebSocket simulator's terminated collection."""
+        """Collect the connector's single-digit menu actions immediately."""
         if transport == "websocket":
             return {
-                "dtmf_input_length": 9,
+                "dtmf_input_length": 1,
                 "inter_digit_timeout_msec": 5000,
                 "termchar": "DTMF_DIGIT_POUND",
             }

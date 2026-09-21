@@ -318,7 +318,7 @@ def test_local_audio_dtmf_works_over_websocket(
             assert welcome["payload"]["input_handling_config"]["dtmf_config"] == {
                 "inter_digit_timeout_msec": 5000,
                 "termchar": "DTMF_DIGIT_POUND",
-                "dtmf_input_length": 9,
+                "dtmf_input_length": 1,
             }
             assert welcome["payload"]["input_handling_config"]["speech_timers"] == {
                 "no_input_timeout_msec": 30000

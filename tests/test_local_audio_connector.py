@@ -156,7 +156,7 @@ class TestLocalAudioConnector:
         assert connector.get_input_mode("grpc") == "INPUT_VOICE_DTMF"
         assert connector.get_input_mode("websocket") == "INPUT_VOICE_DTMF"
         assert connector.get_dtmf_input_config("websocket") == {
-            "dtmf_input_length": 9,
+            "dtmf_input_length": 1,
             "inter_digit_timeout_msec": 5000,
             "termchar": "DTMF_DIGIT_POUND",
         }

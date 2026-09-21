@@ -20,8 +20,7 @@
         {
           "name": "Request transfer",
           "action": "dtmf",
-          "digit": "5",
-          "terminate": true
+          "digit": "5"
         },
         {
           "name": "Prove transfer announcement and gateway event",
@@ -39,8 +38,7 @@
         {
           "name": "Request session end",
           "action": "dtmf",
-          "digit": "6",
-          "terminate": true
+          "digit": "6"
         },
         {
           "name": "Prove goodbye and gateway session end",
