@@ -154,7 +154,7 @@ class TestLocalAudioConnector:
         )
         assert connector.get_websocket_output_mode() == "raw_chunk"
         assert connector.get_input_mode("grpc") == "INPUT_VOICE_DTMF"
-        assert connector.get_input_mode("websocket") == "INPUT_EVENT_DTMF"
+        assert connector.get_input_mode("websocket") == "INPUT_VOICE_DTMF"
         assert connector.get_dtmf_input_config("websocket") == {
             "dtmf_input_length": 1,
             "inter_digit_timeout_msec": 5000,
