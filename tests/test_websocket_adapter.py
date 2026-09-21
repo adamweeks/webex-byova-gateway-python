@@ -7,8 +7,12 @@ import wave
 
 import pytest
 
-from src.generated.byova_common_pb2 import EventInput, OutputEvent
-from src.generated.voicevirtualagent_pb2 import Prompt, VoiceVAResponse
+from src.generated.byova_common_pb2 import DTMFDigits, EventInput, OutputEvent
+from src.generated.voicevirtualagent_pb2 import (
+    Prompt,
+    VoiceVAInputMode,
+    VoiceVAResponse,
+)
 from src.transports.websocket_adapter import (
     UnsupportedMediaError,
     frame_response_payloads,
@@ -115,6 +119,34 @@ def test_raw_chunk_mode_strips_wav_and_adds_empty_final():
     assert payloads[-1]["prompts"] == [
         {"audio_content_b64": "", "is_barge_in_enabled": True}
     ]
+
+
+def test_raw_chunk_mode_configures_dtmf_on_first_frame():
+    response = VoiceVAResponse(
+        prompts=[Prompt(audio_content=_wav(bytes(range(256)) * 30))],
+        response_type=VoiceVAResponse.ResponseType.FINAL,
+        input_mode=VoiceVAInputMode.INPUT_VOICE_DTMF,
+    )
+    response.input_handling_config.dtmf_config.dtmf_input_length = 9
+    response.input_handling_config.dtmf_config.inter_digit_timeout_msec = 5000
+    response.input_handling_config.dtmf_config.termchar = DTMFDigits.DTMF_DIGIT_POUND
+
+    payloads = frame_response_payloads(
+        response, output_mode="raw_chunk", chunk_size=3200
+    )
+
+    assert payloads[0]["response_type"] == "CHUNK"
+    assert payloads[0]["input_mode"] == "INPUT_VOICE_DTMF"
+    assert payloads[0]["input_handling_config"]["dtmf_config"] == {
+        "inter_digit_timeout_msec": 5000,
+        "termchar": "DTMF_DIGIT_POUND",
+        "dtmf_input_length": 9,
+    }
+    assert payloads[0]["input_handling_config"]["speech_timers"] == {
+        "no_input_timeout_msec": 30000
+    }
+    assert "input_mode" not in payloads[1]
+    assert "input_handling_config" not in payloads[1]
 
 
 def test_raw_chunk_mode_preserves_mulaw_wav_payload():

@@ -224,17 +224,18 @@ def test_local_audio_is_discoverable_and_streams_raw_audio_over_websocket(tmp_pa
             )
             responses = await _receive_response_stream(socket)
             assert all(item["type"] == "VOICE_VA_RESPONSE" for item in responses)
-            assert len(responses) == 1
-            assert responses[0]["payload"]["response_type"] == "FINAL"
-            assert responses[0]["payload"]["prompts"][0][
-                "is_barge_in_enabled"
-            ] is True
-            audio = base64.b64decode(
-                responses[0]["payload"]["prompts"][0]["audio_content_b64"],
-                validate=True,
+            assert len(responses) > 1
+            assert responses[0]["payload"]["response_type"] == "CHUNK"
+            assert responses[-1]["payload"]["response_type"] == "FINAL"
+            assert responses[0]["payload"]["prompts"][0]["is_barge_in_enabled"] is True
+            audio = b"".join(
+                base64.b64decode(
+                    item["payload"]["prompts"][0]["audio_content_b64"],
+                    validate=True,
+                )
+                for item in responses[:-1]
             )
-            assert audio.startswith(b"RIFF")
-            assert audio[8:12] == b"WAVE"
+            assert audio == bytes(range(256)) * 4
             await socket.close()
         finally:
             await client.close()
@@ -310,19 +311,18 @@ def test_local_audio_dtmf_works_over_websocket(
                 )
             )
             welcome_frames = await _receive_response_stream(socket)
-            welcome = welcome_frames[-1]
-            assert all(
-                item["type"] == "VOICE_VA_RESPONSE" for item in welcome_frames
-            )
+            welcome = welcome_frames[0]
+            assert all(item["type"] == "VOICE_VA_RESPONSE" for item in welcome_frames)
+            assert welcome["payload"]["response_type"] == "CHUNK"
             assert welcome["payload"]["input_mode"] == "INPUT_VOICE_DTMF"
             assert welcome["payload"]["input_handling_config"]["dtmf_config"] == {
                 "inter_digit_timeout_msec": 5000,
                 "termchar": "DTMF_DIGIT_POUND",
                 "dtmf_input_length": 9,
             }
-            assert welcome["payload"]["input_handling_config"][
-                "speech_timers"
-            ] == {"no_input_timeout_msec": 30000}
+            assert welcome["payload"]["input_handling_config"]["speech_timers"] == {
+                "no_input_timeout_msec": 30000
+            }
 
             await socket.send_json(
                 {
@@ -351,13 +351,15 @@ def test_local_audio_dtmf_works_over_websocket(
                 responses[-1]["payload"]["output_events"][0]["event_type"]
                 == expected_event
             )
-            assert len(responses) == 1
-            audio = base64.b64decode(
-                responses[0]["payload"]["prompts"][0]["audio_content_b64"],
-                validate=True,
+            assert len(responses) > 1
+            audio = b"".join(
+                base64.b64decode(
+                    item["payload"]["prompts"][0]["audio_content_b64"],
+                    validate=True,
+                )
+                for item in responses[:-1]
             )
-            assert audio.startswith(b"RIFF")
-            assert audio[8:12] == b"WAVE"
+            assert audio == bytes(reversed(range(256))) * 4
             await socket.close()
         finally:
             await client.close()

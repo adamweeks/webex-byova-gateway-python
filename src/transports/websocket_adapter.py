@@ -214,12 +214,8 @@ def frame_response_payloads(
         raise ValueError("chunk_size must be between 100 and 65536 bytes")
     payload = response_to_payload(response)
     prompts = payload.get("prompts", [])
-    if any(
-        item.get("audio_content_b64") and item.get("audio_uri") for item in prompts
-    ):
-        raise UnsupportedMediaError(
-            "a prompt cannot mix inline audio and an audio URI"
-        )
+    if any(item.get("audio_content_b64") and item.get("audio_uri") for item in prompts):
+        raise UnsupportedMediaError("a prompt cannot mix inline audio and an audio URI")
     audio_prompts = [item for item in prompts if item.get("audio_content_b64")]
     if output_mode == "wav_final":
         if response.response_type == VoiceVAResponse.ResponseType.CHUNK:
@@ -242,6 +238,11 @@ def frame_response_payloads(
         return [payload]
 
     framed: list[dict[str, Any]] = []
+    first_chunk_metadata = {
+        key: deepcopy(payload[key])
+        for key in ("input_sensitive", "input_mode", "input_handling_config")
+        if key in payload
+    }
     for prompt_index, item in enumerate(audio_prompts):
         audio = base64.b64decode(item["audio_content_b64"], validate=True)
         if audio.startswith(b"RIFF"):
@@ -253,7 +254,16 @@ def frame_response_payloads(
             }
             if index == 0 and prompt_index == 0 and item.get("text"):
                 chunk_prompt["text"] = item["text"]
-            framed.append({"prompts": [chunk_prompt], "response_type": "CHUNK"})
+            chunk_payload: dict[str, Any] = {
+                "prompts": [chunk_prompt],
+                "response_type": "CHUNK",
+            }
+            if not framed:
+                # WxCC fixes the prompt's media and input-collection behavior
+                # from the first response frame.  Configuration delivered only
+                # on the empty FINAL terminator is too late for DTMF collection.
+                chunk_payload.update(first_chunk_metadata)
+            framed.append(chunk_payload)
 
     final_payload = deepcopy(payload)
     final_payload["response_type"] = payload["response_type"]

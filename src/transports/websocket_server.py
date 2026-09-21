@@ -352,23 +352,24 @@ class WebSocketGatewayServer:
                 )
                 if response.response_type != VoiceVAResponse.ResponseType.CHUNK:
                     final_payload = payloads[-1]
-                    input_config = final_payload.get("input_handling_config", {})
+                    first_payload = payloads[0]
+                    input_config = first_payload.get("input_handling_config", {})
                     dtmf_config = input_config.get("dtmf_config", {})
                     speech_timers = input_config.get("speech_timers", {})
                     self.logger.info(
                         "websocket_voice_response_queued conversation_id=%s "
-                        "agent_id=%s output_mode=%s response_type=%s frames=%d "
+                        "agent_id=%s output_mode=%s first_response_type=%s "
+                        "final_response_type=%s frames=%d "
                         "input_mode=%s dtmf_length=%s no_input_timeout_msec=%s",
                         lease.conversation_id,
                         agent_id,
                         output_mode,
+                        first_payload.get("response_type", "unspecified"),
                         final_payload.get("response_type", "unspecified"),
                         len(payloads),
-                        final_payload.get("input_mode", "unspecified"),
+                        first_payload.get("input_mode", "unspecified"),
                         dtmf_config.get("dtmf_input_length", "unspecified"),
-                        speech_timers.get(
-                            "no_input_timeout_msec", "unspecified"
-                        ),
+                        speech_timers.get("no_input_timeout_msec", "unspecified"),
                     )
                 for payload in payloads:
                     await enqueue_outbound(_Outbound("VOICE_VA_RESPONSE", payload))

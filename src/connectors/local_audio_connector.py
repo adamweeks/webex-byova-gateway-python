@@ -88,8 +88,8 @@ class LocalAudioConnector(IVendorConnector):
         return frozenset({"grpc", "websocket"})
 
     def get_websocket_output_mode(self) -> str:
-        """Use the reference simulator's complete WAV prompt framing."""
-        return "wav_final"
+        """Stream prompts as headerless chunks with config on the first frame."""
+        return "raw_chunk"
 
     def get_input_mode(self, transport: str) -> str:
         """Accept both voice and DTMF, matching the reference simulator."""
