@@ -1,5 +1,7 @@
 """Transport capability tests for the shared virtual-agent router."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from src.core.virtual_agent_router import VirtualAgentRouter
@@ -48,3 +50,43 @@ def test_invalid_connector_transport_declarations_are_rejected(value):
 
     with pytest.raises(ValueError, match="supported_transports"):
         router._normalize_transports(value, connector_id="test")
+
+
+def test_dtmf_input_config_is_validated_and_returned():
+    router = VirtualAgentRouter()
+    connector = MagicMock()
+    connector.get_dtmf_input_config.return_value = {
+        "dtmf_input_length": 9,
+        "inter_digit_timeout_msec": 5000,
+        "termchar": "DTMF_DIGIT_POUND",
+    }
+    router.agent_to_connector_map = {"Menu": connector}
+    router.agent_supported_transports = {"Menu": frozenset({"websocket"})}
+
+    assert router.get_dtmf_input_config("Menu", "websocket") == {
+        "dtmf_input_length": 9,
+        "inter_digit_timeout_msec": 5000,
+        "termchar": "DTMF_DIGIT_POUND",
+    }
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"dtmf_input_length": 0, "inter_digit_timeout_msec": 5000,
+         "termchar": "DTMF_DIGIT_POUND"},
+        {"dtmf_input_length": 9, "inter_digit_timeout_msec": 0,
+         "termchar": "DTMF_DIGIT_POUND"},
+        {"dtmf_input_length": 9, "inter_digit_timeout_msec": 5000,
+         "termchar": "NOT_A_DIGIT"},
+    ],
+)
+def test_invalid_dtmf_input_config_is_rejected(config):
+    router = VirtualAgentRouter()
+    connector = MagicMock()
+    connector.get_dtmf_input_config.return_value = config
+    router.agent_to_connector_map = {"Menu": connector}
+    router.agent_supported_transports = {"Menu": frozenset({"websocket"})}
+
+    with pytest.raises(ValueError, match="DTMF"):
+        router.get_dtmf_input_config("Menu", "websocket")

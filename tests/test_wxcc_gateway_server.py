@@ -33,6 +33,11 @@ class TestConversationProcessor:
         router = MagicMock(spec=VirtualAgentRouter)
         router.should_coalesce_speech_end_with_response.return_value = False
         router.get_input_mode.return_value = "INPUT_VOICE_DTMF"
+        router.get_dtmf_input_config.return_value = {
+            "dtmf_input_length": 1,
+            "inter_digit_timeout_msec": 3000,
+            "termchar": "DTMF_DIGIT_POUND",
+        }
         return router
 
     @pytest.fixture

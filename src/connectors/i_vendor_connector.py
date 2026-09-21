@@ -59,6 +59,15 @@ class IVendorConnector(ABC):
         del transport
         return "INPUT_VOICE_DTMF"
 
+    def get_dtmf_input_config(self, transport: str) -> Dict[str, Any]:
+        """Return the DTMF collection policy for one gateway transport."""
+        del transport
+        return {
+            "dtmf_input_length": 1,
+            "inter_digit_timeout_msec": 3000,
+            "termchar": "DTMF_DIGIT_POUND",
+        }
+
     def should_observe_speech_boundaries(self, conversation_id: str) -> bool:
         """Return whether gateway VAD should observe this conversation's frames."""
         del conversation_id

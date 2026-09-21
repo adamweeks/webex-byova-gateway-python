@@ -11,6 +11,7 @@ from collections.abc import Collection
 from typing import Any, Dict, List
 
 from src.connectors.i_vendor_connector import IVendorConnector
+from src.generated.byova_common_pb2 import DTMFDigits
 
 
 class VirtualAgentRouter:
@@ -306,6 +307,40 @@ class VirtualAgentRouter:
                 f"{mode!r}"
             )
         return mode
+
+    def get_dtmf_input_config(
+        self, agent_id: str, transport: str
+    ) -> dict[str, Any]:
+        """Get and validate a connector's transport-specific DTMF policy."""
+        normalized_transport = self._normalize_transport(transport)
+        connector = self.get_connector_for_agent(
+            agent_id, transport=normalized_transport
+        )
+        config = connector.get_dtmf_input_config(normalized_transport)
+        if not isinstance(config, dict):
+            raise ValueError("Connector DTMF input config must be a mapping")
+        length = config.get("dtmf_input_length")
+        timeout = config.get("inter_digit_timeout_msec")
+        termchar = config.get("termchar")
+        if not isinstance(length, int) or not 1 <= length <= 64:
+            raise ValueError("Connector DTMF input length must be from 1 to 64")
+        if not isinstance(timeout, int) or not 1 <= timeout <= 60000:
+            raise ValueError(
+                "Connector DTMF inter-digit timeout must be from 1 to 60000 ms"
+            )
+        if not isinstance(termchar, str):
+            raise ValueError("Connector DTMF terminator must be an enum name")
+        try:
+            DTMFDigits.Value(termchar)
+        except ValueError as error:
+            raise ValueError(
+                f"Connector returned invalid DTMF terminator: {termchar!r}"
+            ) from error
+        return {
+            "dtmf_input_length": length,
+            "inter_digit_timeout_msec": timeout,
+            "termchar": termchar,
+        }
 
     def should_observe_speech_boundaries(
         self, agent_id: str, conversation_id: str

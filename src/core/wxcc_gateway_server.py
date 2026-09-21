@@ -153,18 +153,36 @@ class ConversationProcessor:
         )
         if not isinstance(input_mode_name, str):
             input_mode_name = "INPUT_VOICE_DTMF"
-        self._apply_input_configuration(response, input_mode_name)
+        config_capability = getattr(self.router, "get_dtmf_input_config", None)
+        default_dtmf_config = {
+            "dtmf_input_length": 1,
+            "inter_digit_timeout_msec": 3000,
+            "termchar": "DTMF_DIGIT_POUND",
+        }
+        dtmf_config = (
+            config_capability(self.virtual_agent_id, self.transport)
+            if callable(config_capability)
+            else default_dtmf_config
+        )
+        if not isinstance(dtmf_config, dict):
+            dtmf_config = default_dtmf_config
+        self._apply_input_configuration(response, input_mode_name, dtmf_config)
 
     def _apply_input_configuration(
-        self, response: VoiceVAResponse, input_mode_name: str
+        self,
+        response: VoiceVAResponse,
+        input_mode_name: str,
+        dtmf_config: Dict[str, Any],
     ) -> None:
         """Apply one validated input mode and the shared DTMF collection policy."""
         response.input_mode = VoiceVAInputMode.Value(input_mode_name)
         input_config = InputHandlingConfig(
             dtmf_config=DTMFInputConfig(
-                dtmf_input_length=1,
-                inter_digit_timeout_msec=3000,
-                termchar=DTMFDigits.DTMF_DIGIT_POUND,
+                dtmf_input_length=dtmf_config["dtmf_input_length"],
+                inter_digit_timeout_msec=dtmf_config[
+                    "inter_digit_timeout_msec"
+                ],
+                termchar=DTMFDigits.Value(dtmf_config["termchar"]),
             )
         )
         # The WebSocket schema reserves these gRPC speech completion timers.
@@ -1381,7 +1399,15 @@ class ConversationProcessor:
                 self.conversation_id,
                 error,
             )
-            self._apply_input_configuration(va_response, "INPUT_VOICE_DTMF")
+            self._apply_input_configuration(
+                va_response,
+                "INPUT_VOICE_DTMF",
+                {
+                    "dtmf_input_length": 1,
+                    "inter_digit_timeout_msec": 3000,
+                    "termchar": "DTMF_DIGIT_POUND",
+                },
+            )
 
         self.logger.debug(
             f"Sending error response for conversation {self.conversation_id}"

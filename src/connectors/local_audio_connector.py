@@ -88,14 +88,23 @@ class LocalAudioConnector(IVendorConnector):
         return frozenset({"grpc", "websocket"})
 
     def get_websocket_output_mode(self) -> str:
-        """Stream local prompts as raw WebSocket audio chunks."""
-        return "raw_chunk"
+        """Use the reference simulator's complete WAV prompt framing."""
+        return "wav_final"
 
     def get_input_mode(self, transport: str) -> str:
-        """Collect menu digits as WebSocket events and retain gRPC voice input."""
-        if transport == "websocket":
-            return "INPUT_EVENT_DTMF"
+        """Accept both voice and DTMF, matching the reference simulator."""
+        del transport
         return "INPUT_VOICE_DTMF"
+
+    def get_dtmf_input_config(self, transport: str) -> Dict[str, Any]:
+        """Use the reference WebSocket simulator's terminated collection."""
+        if transport == "websocket":
+            return {
+                "dtmf_input_length": 9,
+                "inter_digit_timeout_msec": 5000,
+                "termchar": "DTMF_DIGIT_POUND",
+            }
+        return super().get_dtmf_input_config(transport)
 
     def start_conversation(
         self, conversation_id: str, request_data: Dict[str, Any]
