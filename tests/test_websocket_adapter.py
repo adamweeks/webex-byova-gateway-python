@@ -145,8 +145,8 @@ def test_raw_chunk_mode_configures_dtmf_on_first_frame():
     assert payloads[0]["input_handling_config"]["speech_timers"] == {
         "no_input_timeout_msec": 30000
     }
-    assert "input_mode" not in payloads[1]
-    assert "input_handling_config" not in payloads[1]
+    assert payloads[1]["input_mode"] == "INPUT_VOICE_DTMF"
+    assert payloads[1]["input_handling_config"] == payloads[0]["input_handling_config"]
 
 
 def test_raw_chunk_mode_preserves_mulaw_wav_payload():

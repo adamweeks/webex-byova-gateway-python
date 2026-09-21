@@ -238,7 +238,7 @@ def frame_response_payloads(
         return [payload]
 
     framed: list[dict[str, Any]] = []
-    first_chunk_metadata = {
+    chunk_collection_metadata = {
         key: deepcopy(payload[key])
         for key in ("input_sensitive", "input_mode", "input_handling_config")
         if key in payload
@@ -258,11 +258,11 @@ def frame_response_payloads(
                 "prompts": [chunk_prompt],
                 "response_type": "CHUNK",
             }
-            if not framed:
-                # WxCC fixes the prompt's media and input-collection behavior
-                # from the first response frame.  Configuration delivered only
-                # on the empty FINAL terminator is too late for DTMF collection.
-                chunk_payload.update(first_chunk_metadata)
+            # WxCC fixes the prompt's media and input-collection behavior from
+            # the first response frame. Repeat the schema-valid collection
+            # contract on every audio CHUNK so an intermediate frame cannot
+            # replace that state with an omitted/default configuration.
+            chunk_payload.update(deepcopy(chunk_collection_metadata))
             framed.append(chunk_payload)
 
     final_payload = deepcopy(payload)
