@@ -10,7 +10,7 @@ import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from aiohttp import WSMsgType, web
 from pydantic import ValidationError
@@ -66,6 +66,14 @@ class _Outbound:
     message_type: str
     payload: dict[str, Any] | None = None
     error: WebSocketProtocolError | None = None
+
+
+@dataclass
+class _ActiveConnection:
+    """One open WebSocket handler that gateway shutdown must drain."""
+
+    task: asyncio.Task
+    request_shutdown: Callable[[], None]
 
 
 class WebSocketGatewayServer:
@@ -132,6 +140,9 @@ class WebSocketGatewayServer:
         self._processors: dict[tuple[str, str], ConversationProcessor] = {}
         self._processors_lock = threading.RLock()
         self._connection_events: list[dict[str, Any]] = []
+        self._active_connections: dict[str, _ActiveConnection] = {}
+        self._cleanup_tasks: set[asyncio.Task] = set()
+        self._shutting_down = False
         self.logger = logging.getLogger(__name__)
 
     def create_app(self) -> web.Application:
@@ -146,6 +157,8 @@ class WebSocketGatewayServer:
         return web.json_response({"status": "healthy", "transport": "websocket"})
 
     async def _authorize(self, request: web.Request) -> web.Response | None:
+        if self._shutting_down:
+            return web.json_response({"error": "gateway is shutting down"}, status=503)
         if self.jwt_validator is None:
             if request.remote not in {"127.0.0.1", "::1"}:
                 return web.json_response(
@@ -184,6 +197,19 @@ class WebSocketGatewayServer:
             max_msg_size=self.max_message_bytes,
         )
         await socket.prepare(request)
+        connection_id = uuid.uuid4().hex
+        current_task = asyncio.current_task()
+        # Discovery holds no provider state, so shutdown can simply cancel it.
+        self._active_connections[connection_id] = _ActiveConnection(
+            task=current_task, request_shutdown=current_task.cancel
+        )
+        try:
+            await self._serve_list_virtual_agents(socket)
+        finally:
+            self._active_connections.pop(connection_id, None)
+        return socket
+
+    async def _serve_list_virtual_agents(self, socket: web.WebSocketResponse) -> None:
         try:
             message = await asyncio.wait_for(
                 socket.receive(), timeout=self.first_message_timeout_seconds
@@ -239,7 +265,6 @@ class WebSocketGatewayServer:
                 seq=1,
                 error=WebSocketProtocolError(detail),
             )
-        return socket
 
     async def handle_voice_agent(self, request: web.Request) -> web.StreamResponse:
         rejection = await self._authorize(request)
@@ -260,6 +285,14 @@ class WebSocketGatewayServer:
         connection_id = uuid.uuid4().hex
         first_frame_type = "not_received"
         first_frame_bytes = 0
+        child_tasks: list[asyncio.Task] = []
+        current_task = asyncio.current_task()
+        # Before SESSION_START there is no provider state, so shutdown can
+        # cancel the handler. This is replaced once the session is running.
+        connection = _ActiveConnection(
+            task=current_task, request_shutdown=current_task.cancel
+        )
+        self._active_connections[connection_id] = connection
         self.logger.info(
             "websocket_voice_connection_opened connection_id=%s", connection_id
         )
@@ -331,6 +364,41 @@ class WebSocketGatewayServer:
             loop = asyncio.get_running_loop()
             output_mode = self.router.get_websocket_output_mode(agent_id)
 
+            def request_shutdown() -> None:
+                nonlocal close_code, termination_reason
+                if stop.is_set():
+                    return
+                termination_reason = "gateway_shutdown"
+                close_code = 1001
+                stop.set()
+
+            connection.request_shutdown = request_shutdown
+
+            async def wait_for_peer_close() -> None:
+                nonlocal termination_reason
+                try:
+                    await asyncio.wait_for(
+                        stop.wait(), timeout=self.terminal_peer_close_timeout_seconds
+                    )
+                except asyncio.TimeoutError:
+                    termination_reason = "terminal_peer_close_timeout"
+                    stop.set()
+
+            def mark_terminal() -> None:
+                """Enter the terminal state for synchronous and async outputs."""
+                nonlocal termination_reason
+                if terminal.is_set():
+                    return
+                terminal.set()
+                if stop.is_set():
+                    return
+                termination_reason = "completed"
+                child_tasks.append(
+                    asyncio.create_task(
+                        wait_for_peer_close(), name="byova-ws-peer-close"
+                    )
+                )
+
             async def enqueue_outbound(item: _Outbound) -> None:
                 try:
                     await asyncio.wait_for(
@@ -345,6 +413,16 @@ class WebSocketGatewayServer:
                     ) from error
 
             async def enqueue_response(response: VoiceVAResponse) -> None:
+                if terminal.is_set():
+                    # The virtual-agent leg already ended with a transfer or
+                    # session end; later connector output must not follow it.
+                    self.logger.debug(
+                        "Dropping connector response after terminal output for "
+                        "conversation %s",
+                        lease.conversation_id,
+                    )
+                    return
+                terminal_events = self._terminal_events(response)
                 payloads = frame_response_payloads(
                     response,
                     output_mode=output_mode,
@@ -373,7 +451,7 @@ class WebSocketGatewayServer:
                     )
                 for payload in payloads:
                     await enqueue_outbound(_Outbound("VOICE_VA_RESPONSE", payload))
-                for output_event in self._terminal_events(response):
+                for output_event in terminal_events:
                     outcome = (
                         "SESSION_END"
                         if output_event.event_type == OutputEvent.EventType.SESSION_END
@@ -394,6 +472,8 @@ class WebSocketGatewayServer:
                         outcome,
                         output_event.name,
                     )
+                if terminal_events:
+                    mark_terminal()
 
             def connector_response_sink(response: VoiceVAResponse) -> bool:
                 future = asyncio.run_coroutine_threadsafe(
@@ -507,31 +587,19 @@ class WebSocketGatewayServer:
                 )
 
             async def process() -> None:
-                nonlocal close_code, termination_reason
+                nonlocal close_code
                 try:
-                    while not stop.is_set():
+                    while not stop.is_set() and not terminal.is_set():
                         item = await inbound.get()
                         try:
                             if item is None:
                                 return
                             responses = await run_connector(item)
                             for response in responses:
+                                # enqueue_response enters the terminal state,
+                                # including for connector-initiated async output.
                                 await enqueue_response(response)
-                                if self._is_terminal(response):
-                                    termination_reason = "completed"
-                                    terminal.set()
-                                    try:
-                                        await asyncio.wait_for(
-                                            stop.wait(),
-                                            timeout=(
-                                                self.terminal_peer_close_timeout_seconds
-                                            ),
-                                        )
-                                    except asyncio.TimeoutError:
-                                        termination_reason = (
-                                            "terminal_peer_close_timeout"
-                                        )
-                                        stop.set()
+                                if terminal.is_set():
                                     return
                         finally:
                             inbound.task_done()
@@ -614,6 +682,7 @@ class WebSocketGatewayServer:
             reader_task = asyncio.create_task(reader(), name="byova-ws-reader")
             process_task = asyncio.create_task(process(), name="byova-ws-processor")
             sender_task = asyncio.create_task(sender(), name="byova-ws-sender")
+            child_tasks.extend((reader_task, process_task, sender_task))
             await stop.wait()
             if terminal.is_set():
                 try:
@@ -627,8 +696,9 @@ class WebSocketGatewayServer:
                     await asyncio.wait_for(outbound.join(), timeout=0.5)
                 except asyncio.TimeoutError:
                     pass
-            for task in (reader_task, process_task):
-                task.cancel()
+            for task in child_tasks:
+                if task is not sender_task:
+                    task.cancel()
             stop.set()
             try:
                 await asyncio.wait_for(sender_task, timeout=0.5)
@@ -684,25 +754,87 @@ class WebSocketGatewayServer:
                 error=protocol_error,
             )
         finally:
-            if processor is not None and response_sink is not None:
-                processor.clear_async_response_sink(response_sink)
+            self._active_connections.pop(connection_id, None)
+            for task in child_tasks:
+                if not task.done():
+                    task.cancel()
+            if lease is not None:
+                finalizer = asyncio.create_task(
+                    self._finalize_conversation(
+                        processor, response_sink, lease, termination_reason
+                    ),
+                    name="byova-ws-finalize",
+                )
+                self._cleanup_tasks.add(finalizer)
+                finalizer.add_done_callback(self._cleanup_tasks.discard)
+                # aiohttp can cancel this handler once a server-closed socket's
+                # transport is gone. Shield provider cleanup and lease release
+                # so that cancellation cannot leak the conversation.
+                await asyncio.shield(finalizer)
+        return socket
+
+    async def _finalize_conversation(
+        self,
+        processor: ConversationProcessor | None,
+        response_sink: Callable[[VoiceVAResponse], bool] | None,
+        lease: ConversationLease,
+        termination_reason: str,
+    ) -> None:
+        """End the provider session once and always release the conversation."""
+        try:
             if processor is not None:
+                if response_sink is not None:
+                    processor.clear_async_response_sink(response_sink)
                 try:
                     await self._run_bounded(
                         processor.cleanup,
                         termination_reason,
                         wait_seconds=5.0,
                     )
-                except WebSocketProtocolError:
+                except (WebSocketProtocolError, RuntimeError):
                     # Preserve exactly-once cleanup during sustained worker
-                    # saturation without adding unbounded executor work.
+                    # saturation, or after the executor has been shut down,
+                    # without adding unbounded executor work.
                     processor.cleanup(termination_reason)
-            if lease is not None:
-                with self._processors_lock:
-                    self._processors.pop(lease.key, None)
-                self.registry.release(lease)
-                self._add_event("end", lease, lease.agent_id, reason=termination_reason)
-        return socket
+        except Exception:
+            self.logger.exception(
+                "WebSocket conversation cleanup failed for conversation %s",
+                lease.conversation_id,
+            )
+        finally:
+            with self._processors_lock:
+                self._processors.pop(lease.key, None)
+            self.registry.release(lease)
+            self._add_event("end", lease, lease.agent_id, reason=termination_reason)
+
+    async def close_active_connections(self, timeout: float = 8.0) -> None:
+        """Stop accepting sockets, end active calls, and await their cleanup."""
+        self._shutting_down = True
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, timeout)
+        connections = list(self._active_connections.values())
+        for connection in connections:
+            connection.request_shutdown()
+        handlers = {
+            connection.task for connection in connections if not connection.task.done()
+        }
+        if handlers:
+            await asyncio.wait(handlers, timeout=max(0.0, deadline - loop.time()))
+        pending = set(self._cleanup_tasks)
+        if pending:
+            _, pending = await asyncio.wait(
+                pending, timeout=max(0.0, deadline - loop.time())
+            )
+        if pending or any(not task.done() for task in handlers):
+            self.logger.warning(
+                "WebSocket shutdown drain timed out: handlers=%d cleanups=%d",
+                sum(1 for task in handlers if not task.done()),
+                len(pending),
+            )
+        else:
+            self.logger.info(
+                "WebSocket shutdown drained %d active connection(s)", len(connections)
+            )
 
     async def _run_bounded(
         self, callable_value, *args, wait_seconds: float | None = None
@@ -861,10 +993,6 @@ class WebSocketGatewayServer:
         return parse_incoming_envelope(self._decode_text_json(message))
 
     @staticmethod
-    def _is_terminal(response: VoiceVAResponse) -> bool:
-        return bool(WebSocketGatewayServer._terminal_events(response))
-
-    @staticmethod
     def _terminal_events(response: VoiceVAResponse) -> list[OutputEvent]:
         return [
             event
@@ -953,11 +1081,15 @@ class WebSocketGatewayRuntime:
         host: str = "0.0.0.0",
         port: int = 8765,
         startup_timeout_seconds: float = 10.0,
+        drain_timeout_seconds: float = 8.0,
+        shutdown_timeout_seconds: float = 2.0,
     ) -> None:
         self.server = server
         self.host = host
         self.port = port
         self.startup_timeout_seconds = startup_timeout_seconds
+        self.drain_timeout_seconds = max(0.0, float(drain_timeout_seconds))
+        self.shutdown_timeout_seconds = max(0.0, float(shutdown_timeout_seconds))
         self._thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._runner: web.AppRunner | None = None
@@ -965,7 +1097,10 @@ class WebSocketGatewayRuntime:
         self._startup_error: BaseException | None = None
 
     async def _start_async(self) -> None:
-        self._runner = web.AppRunner(self.server.create_app())
+        self._runner = web.AppRunner(
+            self.server.create_app(),
+            shutdown_timeout=self.shutdown_timeout_seconds,
+        )
         await self._runner.setup()
         site = web.TCPSite(self._runner, self.host, self.port)
         await site.start()
@@ -982,9 +1117,22 @@ class WebSocketGatewayRuntime:
             return
         self._ready.set()
         self._loop.run_forever()
-        if self._runner is not None:
-            self._loop.run_until_complete(self._runner.cleanup())
-        self._loop.close()
+        try:
+            if self._runner is not None:
+                self._loop.run_until_complete(self._runner.cleanup())
+        finally:
+            self._loop.close()
+
+    async def _stop_async(self) -> None:
+        """Drain active calls before aiohttp stops the listener."""
+        try:
+            await self.server.close_active_connections(
+                timeout=self.drain_timeout_seconds
+            )
+        finally:
+            runner, self._runner = self._runner, None
+            if runner is not None:
+                await runner.cleanup()
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():
@@ -1004,10 +1152,22 @@ class WebSocketGatewayRuntime:
                 "WebSocket listener failed to start"
             ) from self._startup_error
 
-    def stop(self, timeout: float = 5.0) -> None:
+    def stop(self, timeout: float | None = None) -> None:
+        """Close active calls with 1001, end provider sessions, then stop."""
+        if timeout is None:
+            timeout = self.drain_timeout_seconds + self.shutdown_timeout_seconds + 2.0
+        deadline = time.monotonic() + max(0.0, timeout)
         if self._loop and self._loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(self._stop_async(), self._loop)
+            try:
+                future.result(timeout=max(0.0, deadline - time.monotonic()))
+            except Exception:
+                future.cancel()
+                self.server.logger.warning(
+                    "WebSocket listener did not stop cleanly within %.1fs", timeout
+                )
             self._loop.call_soon_threadsafe(self._loop.stop)
         if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=timeout)
+            self._thread.join(timeout=max(1.0, deadline - time.monotonic()))
         self.server.shutdown()
         self._thread = None

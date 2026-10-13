@@ -3,17 +3,22 @@
 import asyncio
 import base64
 import logging
+import socket as socket_module
 import wave
 from typing import Any
 
+import aiohttp
 import pytest
-from aiohttp import WSServerHandshakeError
+from aiohttp import WSMsgType, WSServerHandshakeError
 from aiohttp.test_utils import TestClient, TestServer
 
 from src.auth.jwt_validator import AccessTokenException
 from src.core.conversation_registry import ConversationRegistry
 from src.core.virtual_agent_router import VirtualAgentRouter
-from src.transports.websocket_server import WebSocketGatewayServer
+from src.transports.websocket_server import (
+    WebSocketGatewayRuntime,
+    WebSocketGatewayServer,
+)
 
 
 class FakeRouter:
@@ -28,6 +33,8 @@ class FakeRouter:
             ["Test Agent"] if websocket_agents is None else websocket_agents
         )
         self.end_calls = 0
+        self.message_calls = 0
+        self.async_sink = None
         self.discovery_transports: list[str | None] = []
 
     def get_all_available_agents(self, transport=None):
@@ -56,11 +63,12 @@ class FakeRouter:
             self.end_calls += 1
             return None
         if operation in {"send_message", "handle_speech_boundary"}:
+            self.message_calls += 1
             return None
         raise AssertionError(operation)
 
-    def set_async_response_sink(self, *args):
-        return None
+    def set_async_response_sink(self, agent_id, conversation_id, sink):
+        self.async_sink = sink
 
     def clear_async_response_sink(self, *args):
         return None
@@ -100,6 +108,42 @@ async def _wait_for_cleanup(router: FakeRouter) -> None:
             return
         await asyncio.sleep(0.01)
     raise AssertionError("provider cleanup did not complete")
+
+
+async def _wait_for_release(server: WebSocketGatewayServer) -> None:
+    for _ in range(100):
+        if not server.registry.snapshot() and not server._processors:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("conversation lease was not released")
+
+
+def _end_events(server: WebSocketGatewayServer) -> list[dict[str, Any]]:
+    return [
+        event
+        for event in server.get_connection_events()
+        if event["event_type"] == "end"
+    ]
+
+
+def _event(seq: int, event_type: str) -> dict[str, Any]:
+    value = _start(seq=seq)
+    value["payload"]["voice_va_input_type"] = {
+        "event_input": {"event_type": event_type}
+    }
+    return value
+
+
+def _audio(seq: int) -> dict[str, Any]:
+    value = _start(seq=seq)
+    value["payload"]["voice_va_input_type"] = {
+        "audio_input": {
+            "caller_audio_b64": base64.b64encode(b"\xff" * 160).decode("ascii"),
+            "encoding": "MULAW_FORMAT",
+            "sample_rate_hertz": 8000,
+        }
+    }
+    return value
 
 
 async def _receive_response_stream(socket) -> list[dict[str, Any]]:
@@ -688,3 +732,175 @@ def test_existing_grpc_ownership_blocks_websocket_conversation():
             server.shutdown()
 
     asyncio.run(scenario())
+
+
+def test_server_initiated_close_releases_lease_and_cleans_provider_once():
+    """A gateway-side protocol close must not leak the conversation lease."""
+
+    async def scenario():
+        router = FakeRouter()
+        server = WebSocketGatewayServer(router, allow_unauthenticated_local_dev=True)
+        client = await _client_for(server)
+        try:
+            socket = await client.ws_connect("/v1/va")
+            await socket.send_json(_start())
+            assert (await socket.receive_json())["type"] == "VOICE_VA_RESPONSE"
+            await socket.send_json(_event(1, "CUSTOM_EVENT"))
+            assert (await socket.receive_json())["type"] == "ERROR"
+            await socket.receive()
+            await _wait_for_release(server)
+            assert router.end_calls == 1
+            assert [event["reason"] for event in _end_events(server)] == [
+                "websocket_disconnect"
+            ]
+
+            reconnect = await client.ws_connect("/v1/va")
+            await reconnect.send_json(_start())
+            assert (await reconnect.receive_json())["type"] == "VOICE_VA_RESPONSE"
+            await reconnect.close()
+            await _wait_for_release(server)
+            assert router.end_calls == 2
+        finally:
+            await client.close()
+            server.shutdown()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=20))
+
+
+def test_async_connector_transfer_enters_terminal_state():
+    """A transfer delivered through the async sink ends the agent leg."""
+
+    async def scenario():
+        router = FakeRouter()
+        server = WebSocketGatewayServer(router, allow_unauthenticated_local_dev=True)
+        client = await _client_for(server)
+        try:
+            socket = await client.ws_connect("/v1/va")
+            await socket.send_json(_start())
+            assert (await socket.receive_json())["type"] == "VOICE_VA_RESPONSE"
+            assert router.async_sink is not None
+
+            accepted = await asyncio.to_thread(
+                router.async_sink,
+                {
+                    "message_type": "transfer",
+                    "text": "Connecting you to an agent",
+                    "audio_content": b"",
+                    "response_type": "final",
+                },
+            )
+            assert accepted is True
+            transfer = await socket.receive_json()
+            assert transfer["type"] == "VOICE_VA_RESPONSE"
+            assert [
+                event["event_type"] for event in transfer["payload"]["output_events"]
+            ] == ["TRANSFER_TO_AGENT"]
+
+            # In-flight caller media after the terminal output is ignored and
+            # the gateway waits for WxCC to end and close the socket.
+            await socket.send_json(_audio(2))
+            await socket.send_json(_event(3, "SESSION_END"))
+            close = await socket.receive()
+            assert close.type == WSMsgType.CLOSE
+            assert socket.close_code == 1000
+            await _wait_for_release(server)
+            assert router.message_calls == 0
+            assert router.end_calls == 1
+            assert [event["reason"] for event in _end_events(server)] == ["completed"]
+        finally:
+            await client.close()
+            server.shutdown()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=20))
+
+
+def test_async_terminal_peer_close_wait_is_bounded():
+    async def scenario():
+        router = FakeRouter()
+        server = WebSocketGatewayServer(
+            router,
+            allow_unauthenticated_local_dev=True,
+            terminal_peer_close_timeout_seconds=0.05,
+        )
+        client = await _client_for(server)
+        try:
+            socket = await client.ws_connect("/v1/va")
+            await socket.send_json(_start())
+            assert (await socket.receive_json())["type"] == "VOICE_VA_RESPONSE"
+            await asyncio.to_thread(
+                router.async_sink,
+                {"message_type": "session_end", "audio_content": b""},
+            )
+            assert (await socket.receive_json())["type"] == "VOICE_VA_RESPONSE"
+            assert (await socket.receive()).type == WSMsgType.CLOSE
+            assert socket.close_code == 1000
+            await _wait_for_release(server)
+            assert router.end_calls == 1
+            assert [event["reason"] for event in _end_events(server)] == [
+                "terminal_peer_close_timeout"
+            ]
+        finally:
+            await client.close()
+            server.shutdown()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=20))
+
+
+def test_new_connections_are_rejected_while_shutting_down():
+    async def scenario():
+        server = WebSocketGatewayServer(
+            FakeRouter(), allow_unauthenticated_local_dev=True
+        )
+        client = await _client_for(server)
+        try:
+            await server.close_active_connections(timeout=0.1)
+            with pytest.raises(WSServerHandshakeError) as error:
+                await client.ws_connect("/v1/va")
+            assert error.value.status == 503
+        finally:
+            await client.close()
+            server.shutdown()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=20))
+
+
+def _free_port() -> int:
+    with socket_module.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        return probe.getsockname()[1]
+
+
+def test_runtime_stop_closes_active_calls_and_cleans_provider():
+    """Gateway shutdown sends 1001 and ends the provider session once."""
+
+    async def scenario():
+        router = FakeRouter()
+        server = WebSocketGatewayServer(router, allow_unauthenticated_local_dev=True)
+        port = _free_port()
+        runtime = WebSocketGatewayRuntime(server, host="127.0.0.1", port=port)
+        runtime.start()
+        try:
+            async with aiohttp.ClientSession() as session:
+                voice = await session.ws_connect(f"ws://127.0.0.1:{port}/v1/va")
+                discovery = await session.ws_connect(
+                    f"ws://127.0.0.1:{port}/v1/listVirtualAgents"
+                )
+                await voice.send_json(_start())
+                assert (await voice.receive_json())["type"] == "VOICE_VA_RESPONSE"
+
+                stopping = asyncio.create_task(asyncio.to_thread(runtime.stop))
+                close = await asyncio.wait_for(voice.receive(), timeout=5)
+                assert close.type == WSMsgType.CLOSE
+                assert voice.close_code == 1001
+                await asyncio.wait_for(discovery.receive(), timeout=5)
+                await asyncio.wait_for(stopping, timeout=15)
+        finally:
+            runtime.stop()
+
+        assert router.end_calls == 1
+        assert not server.registry.snapshot()
+        assert [event["reason"] for event in _end_events(server)] == [
+            "gateway_shutdown"
+        ]
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=20))

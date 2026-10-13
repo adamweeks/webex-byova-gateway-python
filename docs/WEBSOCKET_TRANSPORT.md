@@ -34,7 +34,13 @@ For a partner-initiated transfer or session end, the gateway sends the
 terminal `VOICE_VA_RESPONSE`, flushes it, and waits for WxCC to close the
 conversation socket. It does not close immediately after sending the terminal
 event. A bounded peer-close timeout prevents an abandoned connection from
-holding provider state indefinitely.
+holding provider state indefinitely. A transfer or session end that a
+connector delivers asynchronously, after the request that triggered it has
+returned, enters the same terminal state.
+
+On gateway shutdown, new upgrades receive HTTP 503, every active call is closed
+with WebSocket code 1001, and each provider session is ended before the
+listener stops. The drain is bounded (8 seconds by default).
 
 The gateway owns VAD by default even though the socket is full duplex. A
 connector may opt out through the existing speech-boundary capability, but the
