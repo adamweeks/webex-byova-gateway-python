@@ -91,7 +91,7 @@ def test_container_uses_digest_pinned_amazon_linux() -> None:
 
     expected_base = (
         "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:"
-        "d3bfd777397ab1ab4c739f1b48655fc98578c2f9a895deba3e86f98258ccc113"
+        "478c519817ce1c2cdc64700e4395775143446f8706706906b942960f0394ff2e"
     )
     assert dockerfile.count(f"FROM {expected_base}") == 2
     assert "python3.12" in dockerfile

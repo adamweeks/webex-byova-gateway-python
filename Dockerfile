@@ -4,7 +4,7 @@
 # deployment must still pin the resulting application image by ECR digest in
 # its task definition.
 
-FROM public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:d3bfd777397ab1ab4c739f1b48655fc98578c2f9a895deba3e86f98258ccc113 AS builder
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:478c519817ce1c2cdc64700e4395775143446f8706706906b942960f0394ff2e AS builder
 
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
@@ -39,7 +39,7 @@ RUN python -m grpc_tools.protoc \
     && pip uninstall --yes pip setuptools wheel
 
 
-FROM public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:d3bfd777397ab1ab4c739f1b48655fc98578c2f9a895deba3e86f98258ccc113 AS runtime
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023-minimal@sha256:478c519817ce1c2cdc64700e4395775143446f8706706906b942960f0394ff2e AS runtime
 
 RUN microdnf update -y \
     && microdnf install -y ca-certificates libgomp libsndfile python3.12 \
