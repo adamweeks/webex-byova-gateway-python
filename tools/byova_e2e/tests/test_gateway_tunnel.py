@@ -1,5 +1,7 @@
 import json
+import os
 import signal
+import socket
 import subprocess
 
 import pytest
@@ -7,8 +9,32 @@ from byova_e2e.gateway_tunnel import (
     GatewayTunnelError,
     SSMPortForward,
     SSMPortForwardConfig,
+    _local_port_available,
     gateway_event_tunnel,
 )
+
+
+def test_local_port_check_rejects_an_active_listener() -> None:
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        assert not _local_port_available(listener.getsockname()[1])
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX socket reuse behavior")
+def test_local_port_check_allows_a_closed_tunnel_in_time_wait() -> None:
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+        listener.listen()
+        with socket.create_connection(("127.0.0.1", port)) as client:
+            connection, _ = listener.accept()
+            connection.close()
+            assert client.recv(1) == b""
+
+    assert _local_port_available(port)
 
 
 def test_ssm_command_preserves_values_as_argv_data() -> None:

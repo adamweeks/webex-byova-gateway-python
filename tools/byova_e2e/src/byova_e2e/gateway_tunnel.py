@@ -211,6 +211,9 @@ def _validate_port(value: int, name: str) -> None:
 def _local_port_available(port: int) -> bool:
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            if os.name != "nt":
+                # Match the SSM listener so TIME_WAIT does not block the next run.
+                listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             listener.bind(("127.0.0.1", port))
     except OSError:
         return False
