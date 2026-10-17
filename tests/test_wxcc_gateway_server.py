@@ -241,6 +241,28 @@ class TestConversationProcessor:
         frame = processor.speech_boundary_observer.observe.call_args.args[0]
         assert frame.sample_rate_hertz == 16000
 
+    def test_audio_diagnostics_report_signal_without_recording_samples(
+        self, processor, mock_router, caplog
+    ):
+        mock_router.route_request.return_value = None
+        processor.speech_boundary_observer = MagicMock()
+        processor.speech_boundary_observer.observe.return_value = []
+        with caplog.at_level(logging.INFO):
+            for audio in [b"\x00\x00" * 256, b"\x00\x40" * 256]:
+                list(processor._process_audio_input(VoiceInput(
+                    caller_audio=audio,
+                    encoding=VoiceInput.VoiceEncoding.LINEAR16_FORMAT,
+                    sample_rate_hertz=8000,
+                )))
+            processor._end_connector_once({})
+            processor._end_connector_once({})
+
+        summaries = [r.message for r in caplog.records if "gateway_audio_summary" in r.message]
+        assert len(summaries) == 1
+        assert "frames=2 audio_bytes=1024 peak_frame_rms=0.500000" in summaries[0]
+        assert "sample_rate_hertz=8000 frame_bytes=512" in caplog.text
+        assert "caller_audio" not in caplog.text
+
     def test_gateway_keeps_speech_started_as_standalone_final_event(
         self, processor, mock_router, mock_audio_input
     ):

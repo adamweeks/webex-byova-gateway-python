@@ -6,6 +6,7 @@ Webex Contact Center and the virtual agent connectors.
 """
 
 import logging
+import math
 import queue
 import threading
 import time
@@ -97,6 +98,9 @@ class ConversationProcessor:
         self._speech_end_lock = threading.Lock()
         self._connector_end_lock = threading.Lock()
         self._connector_end_called = False
+        self._audio_frames_received = 0
+        self._audio_bytes_received = 0
+        self._audio_peak_frame_rms = 0.0
         self._pending_speech_end_timer: Optional[threading.Timer] = None
         self._pending_speech_end_sample_rate_hertz: Optional[int] = None
         self._pending_speech_end_uses_recognition_grace = False
@@ -566,6 +570,18 @@ class ConversationProcessor:
     def _process_audio_input(self, audio_input) -> Iterator[VoiceVAResponse]:
         """Process audio input."""
         try:
+            self._audio_frames_received += 1
+            self._audio_bytes_received += len(audio_input.caller_audio)
+            if self._audio_frames_received == 1:
+                self.logger.info(
+                    "gateway_audio_format conversation_id=%s transport=%s "
+                    "encoding=%s sample_rate_hertz=%d frame_bytes=%d",
+                    self.conversation_id,
+                    self.transport,
+                    audio_input.encoding,
+                    audio_input.sample_rate_hertz,
+                    len(audio_input.caller_audio),
+                )
             # Convert request to connector format
             message_data = {
                 "conversation_id": self.conversation_id,
@@ -605,6 +621,11 @@ class ConversationProcessor:
                 audio_input.sample_rate_hertz,
                 fallback_sample_rate_hertz=self.vad_fallback_sample_rate_hertz,
             )
+            if frame.samples:
+                frame_rms = math.sqrt(
+                    sum(sample * sample for sample in frame.samples) / len(frame.samples)
+                )
+                self._audio_peak_frame_rms = max(self._audio_peak_frame_rms, frame_rms)
             for signal in self.speech_boundary_observer.observe(frame):
                 event_type = (
                     "START_OF_INPUT"
@@ -1451,6 +1472,15 @@ class ConversationProcessor:
             if self._connector_end_called:
                 return None
             self._connector_end_called = True
+        self.logger.info(
+            "gateway_audio_summary conversation_id=%s transport=%s "
+            "frames=%d audio_bytes=%d peak_frame_rms=%.6f",
+            self.conversation_id,
+            self.transport,
+            self._audio_frames_received,
+            self._audio_bytes_received,
+            self._audio_peak_frame_rms,
+        )
         try:
             return self.router.route_request(
                 self.virtual_agent_id,
