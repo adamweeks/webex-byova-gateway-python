@@ -87,7 +87,9 @@ def _text_content(value: Any) -> dict[str, Any] | None:
     return result
 
 
-def response_to_payload(response: VoiceVAResponse) -> dict[str, Any]:
+def response_to_payload(
+    response: VoiceVAResponse, *, include_audio: bool = True
+) -> dict[str, Any]:
     """Convert a shared response into the intended WebSocket JSON payload."""
 
     payload: dict[str, Any] = {
@@ -101,7 +103,7 @@ def response_to_payload(response: VoiceVAResponse) -> dict[str, Any]:
                 value["text"] = prompt.text
             if prompt.audio_uri:
                 value["audio_uri"] = prompt.audio_uri
-            if prompt.audio_content:
+            if include_audio and prompt.audio_content:
                 value["audio_content_b64"] = base64.b64encode(
                     prompt.audio_content
                 ).decode("ascii")
@@ -189,17 +191,17 @@ def _wav_frames(audio: bytes) -> bytes:
 
 def _chunks(audio: bytes, chunk_size: int) -> Iterable[bytes]:
     if not audio:
-        return []
+        return
     if len(audio) < 100:
         raise UnsupportedMediaError("raw response audio is smaller than 100 bytes")
-    parts = [
-        audio[offset : offset + chunk_size]
-        for offset in range(0, len(audio), chunk_size)
-    ]
-    if len(parts) > 1 and len(parts[-1]) < 100:
-        parts[-2] += parts[-1]
-        parts.pop()
-    return parts
+    offset = 0
+    while offset < len(audio):
+        end = min(offset + chunk_size, len(audio))
+        if 0 < len(audio) - end < 100:
+            # Merge a short tail only if it fits; otherwise reserve 100 bytes.
+            end = len(audio) if len(audio) - offset <= 65_536 else len(audio) - 100
+        yield audio[offset:end]
+        offset = end
 
 
 def frame_response_payloads(
@@ -212,27 +214,31 @@ def frame_response_payloads(
 
     if not 100 <= chunk_size <= 65_536:
         raise ValueError("chunk_size must be between 100 and 65536 bytes")
-    payload = response_to_payload(response)
+    payload = response_to_payload(response, include_audio=False)
     prompts = payload.get("prompts", [])
-    if any(item.get("audio_content_b64") and item.get("audio_uri") for item in prompts):
+    audio_prompts = [
+        (source.audio_content, item)
+        for source, item in zip(response.prompts, prompts)
+        if source.audio_content
+    ]
+    if any(item.get("audio_uri") for audio, item in audio_prompts):
         raise UnsupportedMediaError("a prompt cannot mix inline audio and an audio URI")
-    audio_prompts = [item for item in prompts if item.get("audio_content_b64")]
     if output_mode == "wav_final":
         if response.response_type == VoiceVAResponse.ResponseType.CHUNK:
             raise UnsupportedMediaError("wav_final connector returned CHUNK audio")
-        for item in audio_prompts:
-            audio = base64.b64decode(item["audio_content_b64"], validate=True)
+        for audio, item in audio_prompts:
             if not audio.startswith(b"RIFF"):
                 raise UnsupportedMediaError("wav_final response must contain WAV audio")
+            item["audio_content_b64"] = base64.b64encode(audio).decode("ascii")
         return [payload]
     if output_mode != "raw_chunk":
         raise UnsupportedMediaError(f"unsupported output mode: {output_mode}")
 
     if response.response_type == VoiceVAResponse.ResponseType.CHUNK:
-        for item in audio_prompts:
-            audio = base64.b64decode(item["audio_content_b64"], validate=True)
+        for audio, item in audio_prompts:
             if not 100 <= len(audio) <= 65_536:
                 raise UnsupportedMediaError("CHUNK audio must be 100 to 65536 bytes")
+            item["audio_content_b64"] = base64.b64encode(audio).decode("ascii")
         return [payload]
     if not audio_prompts:
         return [payload]
@@ -243,8 +249,7 @@ def frame_response_payloads(
         for key in ("input_sensitive", "input_mode", "input_handling_config")
         if key in payload
     }
-    for prompt_index, item in enumerate(audio_prompts):
-        audio = base64.b64decode(item["audio_content_b64"], validate=True)
+    for prompt_index, (audio, item) in enumerate(audio_prompts):
         if audio.startswith(b"RIFF"):
             audio = _wav_frames(audio)
         for index, chunk in enumerate(_chunks(audio, chunk_size)):
@@ -264,6 +269,7 @@ def frame_response_payloads(
             # replace that state with an omitted/default configuration.
             chunk_payload.update(deepcopy(chunk_collection_metadata))
             framed.append(chunk_payload)
+        item["audio_content_b64"] = ""
 
     final_payload = deepcopy(payload)
     final_payload["response_type"] = payload["response_type"]

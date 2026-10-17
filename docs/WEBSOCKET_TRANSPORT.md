@@ -15,6 +15,8 @@ The WebSocket transport implements:
   parsing that ignores unknown control-plane fields, matching Cisco's sample
 - pre-upgrade JWT validation against the separate WebSocket datasource
 - bounded input, output, and connector-worker capacity
+- cancellation-safe worker accounting and one reserved cleanup worker, so a
+  slow provider teardown does not block the socket event loop
 - monotonic sender sequence validation, PING/PONG, fatal protocol errors, and
   exactly-once provider cleanup on disconnect
 
@@ -157,8 +159,9 @@ This eligibility is the WxCC-to-gateway transport, not the provider protocol.
 WebSocket. Configure the separate `GECXWebSocketConnector` and use a distinct
 agent ID when both the WxCC and CES connections should use WebSocket.
 
-- GECX declares `raw_chunk`.
-- Local Audio and AWS Lex declare `wav_final`.
+- GECX and Local Audio declare `raw_chunk`.
+- AWS Lex declares `wav_final`, but remains gRPC-only until explicitly reviewed
+  and enabled for the WebSocket transport.
 - Existing third-party connectors that do not declare the optional capability
   default to `raw_chunk`, preserving their source compatibility.
 
@@ -166,3 +169,6 @@ agent ID when both the WxCC and CES connections should use WebSocket.
 WAV and emits 100–65,536 byte `CHUNK` responses followed by an empty-audio
 `FINAL`. `wav_final` emits one complete WAV response. Unsupported media that
 would require general codec or sample-rate transcoding is rejected.
+
+See [WebSocket Live Testing](WEBSOCKET_LIVE_TESTING.md) for the local readiness
+checks, live acceptance matrix, and evidence to collect when resuming testing.

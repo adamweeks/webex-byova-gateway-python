@@ -16,6 +16,8 @@ code, not a managed connector or a production-ready service.
 
 ## Develop and Test
 
+- [WebSocket Live Testing](WEBSOCKET_LIVE_TESTING.md): Resume from local validation
+  with an explicit WxCC/CES acceptance matrix and correlated evidence.
 - [Local Audio Connector Configuration](LOCAL_AUDIO_CONFIGURATION.md): Validate the gateway
   and a Webex Contact Center sandbox before selecting a voice-agent provider.
 - [Local Development](LOCAL_DEVELOPMENT.md): Install, configure a local-only run, start the

@@ -8,7 +8,7 @@ import logging
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -137,6 +137,12 @@ class WebSocketGatewayServer:
         )
         self._worker_capacity = connector_max_workers + connector_max_pending
         self._worker_slots = threading.BoundedSemaphore(self._worker_capacity)
+        # One reserved cleanup worker remains available when connector work stalls.
+        self._cleanup_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="byova-websocket-cleanup"
+        )
+        self._cleanup_slots = threading.BoundedSemaphore(1)
+        self._executor_shutdown = False
         self._processors: dict[tuple[str, str], ConversationProcessor] = {}
         self._processors_lock = threading.RLock()
         self._connection_events: list[dict[str, Any]] = []
@@ -279,6 +285,7 @@ class WebSocketGatewayServer:
 
         lease: ConversationLease | None = None
         processor: ConversationProcessor | None = None
+        connector_work: Future | None = None
         response_sink = None
         termination_reason = "websocket_disconnect"
         close_code = 1001
@@ -582,8 +589,14 @@ class WebSocketGatewayServer:
                 envelope_value: VoiceVARequestEnvelope,
             ) -> list[VoiceVAResponse]:
                 request_value = request_to_protobuf(envelope_value)
+
+                def remember_work(future: Future) -> None:
+                    nonlocal connector_work
+                    connector_work = future
+
                 return await self._run_bounded(
-                    lambda: list(processor.process_request(request_value))
+                    lambda: list(processor.process_request(request_value)),
+                    on_submit=remember_work,
                 )
 
             async def process() -> None:
@@ -761,12 +774,16 @@ class WebSocketGatewayServer:
             if lease is not None:
                 finalizer = asyncio.create_task(
                     self._finalize_conversation(
-                        processor, response_sink, lease, termination_reason
+                        processor,
+                        response_sink,
+                        lease,
+                        termination_reason,
+                        connector_work,
                     ),
                     name="byova-ws-finalize",
                 )
                 self._cleanup_tasks.add(finalizer)
-                finalizer.add_done_callback(self._cleanup_tasks.discard)
+                finalizer.add_done_callback(self._cleanup_finished)
                 # aiohttp can cancel this handler once a server-closed socket's
                 # transport is gone. Shield provider cleanup and lease release
                 # so that cancellation cannot leak the conversation.
@@ -779,23 +796,30 @@ class WebSocketGatewayServer:
         response_sink: Callable[[VoiceVAResponse], bool] | None,
         lease: ConversationLease,
         termination_reason: str,
+        connector_work: Future | None = None,
     ) -> None:
         """End the provider session once and always release the conversation."""
         try:
             if processor is not None:
                 if response_sink is not None:
                     processor.clear_async_response_sink(response_sink)
-                try:
-                    await self._run_bounded(
-                        processor.cleanup,
-                        termination_reason,
-                        wait_seconds=5.0,
-                    )
-                except (WebSocketProtocolError, RuntimeError):
-                    # Preserve exactly-once cleanup during sustained worker
-                    # saturation, or after the executor has been shut down,
-                    # without adding unbounded executor work.
-                    processor.cleanup(termination_reason)
+                if connector_work is not None:
+                    try:
+                        # Startup may still be registering provider state after disconnect.
+                        # Wait before reserving cleanup capacity or releasing ownership.
+                        await asyncio.shield(asyncio.wrap_future(connector_work))
+                    except asyncio.CancelledError:
+                        if not connector_work.cancelled():
+                            raise
+                        # Executor shutdown cancelled queued work, not this finalizer.
+                    except Exception:
+                        self.logger.debug(
+                            "Connector work failed before WebSocket cleanup",
+                            exc_info=True,
+                        )
+                await self._run_bounded(
+                    processor.cleanup, termination_reason, cleanup=True
+                )
         except Exception:
             self.logger.exception(
                 "WebSocket conversation cleanup failed for conversation %s",
@@ -806,6 +830,11 @@ class WebSocketGatewayServer:
                 self._processors.pop(lease.key, None)
             self.registry.release(lease)
             self._add_event("end", lease, lease.agent_id, reason=termination_reason)
+
+    def _cleanup_finished(self, task: asyncio.Task) -> None:
+        self._cleanup_tasks.discard(task)
+        if self._executor_shutdown and not self._cleanup_tasks:
+            self._cleanup_executor.shutdown(wait=False)
 
     async def close_active_connections(self, timeout: float = 8.0) -> None:
         """Stop accepting sockets, end active calls, and await their cleanup."""
@@ -837,7 +866,12 @@ class WebSocketGatewayServer:
             )
 
     async def _run_bounded(
-        self, callable_value, *args, wait_seconds: float | None = None
+        self,
+        callable_value,
+        *args,
+        wait_seconds: float | None = None,
+        cleanup: bool = False,
+        on_submit: Callable[[Future], None] | None = None,
     ):
         """Run blocking work without allowing an unbounded executor backlog."""
         loop = asyncio.get_running_loop()
@@ -846,8 +880,10 @@ class WebSocketGatewayServer:
             if wait_seconds is None
             else max(0.0, wait_seconds)
         )
-        while not self._worker_slots.acquire(blocking=False):
-            if loop.time() >= deadline:
+        executor = self._cleanup_executor if cleanup else self._executor
+        slots = self._cleanup_slots if cleanup else self._worker_slots
+        while not slots.acquire(blocking=False):
+            if not cleanup and loop.time() >= deadline:
                 raise WebSocketProtocolError(
                     "connector worker capacity is exhausted",
                     code="rate_limit",
@@ -855,10 +891,27 @@ class WebSocketGatewayServer:
                     close_code=1013,
                 )
             await asyncio.sleep(0.01)
+        cancelled = threading.Event()
+
+        def run():
+            if not cancelled.is_set():
+                return callable_value(*args)
+
         try:
-            return await loop.run_in_executor(self._executor, callable_value, *args)
-        finally:
-            self._worker_slots.release()
+            future = executor.submit(run)
+        except BaseException:
+            slots.release()
+            raise
+        # Cancelling the waiter cannot stop a running thread or free its capacity.
+        future.add_done_callback(lambda completed: slots.release())
+        if on_submit is not None:
+            on_submit(future)
+        try:
+            return await asyncio.shield(asyncio.wrap_future(future))
+        except asyncio.CancelledError:
+            # Queued work must not start provider operations after its caller left.
+            cancelled.set()
+            raise
 
     @staticmethod
     def _decode_text_json(message: Any) -> Any:
@@ -1068,7 +1121,10 @@ class WebSocketGatewayServer:
         return list(self._connection_events)
 
     def shutdown(self) -> None:
+        self._executor_shutdown = True
         self._executor.shutdown(wait=False, cancel_futures=True)
+        if not self._cleanup_tasks:
+            self._cleanup_executor.shutdown(wait=False)
 
 
 class WebSocketGatewayRuntime:

@@ -4,7 +4,10 @@ import asyncio
 import base64
 import logging
 import socket as socket_module
+import threading
 import wave
+from concurrent.futures import Future
+from types import SimpleNamespace
 from typing import Any
 
 import aiohttp
@@ -18,6 +21,7 @@ from src.core.virtual_agent_router import VirtualAgentRouter
 from src.transports.websocket_server import (
     WebSocketGatewayRuntime,
     WebSocketGatewayServer,
+    WebSocketProtocolError,
 )
 
 
@@ -904,3 +908,271 @@ def test_runtime_stop_closes_active_calls_and_cleans_provider():
         ]
 
     asyncio.run(asyncio.wait_for(scenario(), timeout=20))
+
+
+@pytest.mark.parametrize("pending", [0, 1])
+def test_cancelled_connector_work_keeps_capacity_until_worker_finishes(pending):
+    async def scenario():
+        server = WebSocketGatewayServer(
+            FakeRouter(),
+            allow_unauthenticated_local_dev=True,
+            connector_max_workers=1,
+            connector_max_pending=pending,
+        )
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocked():
+            entered.set()
+            assert release.wait(5)
+
+        first = asyncio.create_task(server._run_bounded(blocked))
+        queued = None
+        queued_effects = []
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            if pending:
+                queued = asyncio.create_task(
+                    server._run_bounded(lambda: queued_effects.append("ran"))
+                )
+                # Let the second coroutine submit its work behind the blocked job.
+                await asyncio.sleep(0)
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            if queued is not None:
+                queued.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await queued
+            with pytest.raises(WebSocketProtocolError, match="capacity is exhausted"):
+                await server._run_bounded(lambda: "excess", wait_seconds=0)
+            release.set()
+            assert await server._run_bounded(lambda: "recovered") == "recovered"
+            assert queued_effects == []
+        finally:
+            release.set()
+            await asyncio.gather(
+                first, *([queued] if queued else []), return_exceptions=True
+            )
+            server.shutdown()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=10))
+
+
+def test_cleanup_stays_responsive_when_connector_workers_are_full():
+    async def scenario():
+        processing = threading.Event()
+        release_processing = threading.Event()
+        cleaning = threading.Event()
+        release_cleanup = threading.Event()
+
+        class SlowCleanupRouter(FakeRouter):
+            def route_request(self, agent_id, operation, conversation_id, message_data):
+                if operation == "end_conversation":
+                    cleaning.set()
+                    assert release_cleanup.wait(5)
+                return super().route_request(
+                    agent_id, operation, conversation_id, message_data
+                )
+
+        router = SlowCleanupRouter()
+        server = WebSocketGatewayServer(
+            router,
+            allow_unauthenticated_local_dev=True,
+            connector_max_workers=1,
+            connector_max_pending=0,
+        )
+        client = await _client_for(server)
+        work = None
+
+        def blocked():
+            processing.set()
+            assert release_processing.wait(5)
+
+        try:
+            voice = await client.ws_connect("/v1/va")
+            await voice.send_json(_start())
+            await voice.receive_json()
+            work = asyncio.create_task(server._run_bounded(blocked))
+            assert await asyncio.to_thread(processing.wait, 2)
+            await voice.close()
+            assert await asyncio.to_thread(cleaning.wait, 2)
+            # Cleanup is blocked in a provider, but the listener must still serve peers.
+            response = await asyncio.wait_for(client.get("/health"), timeout=0.5)
+            assert response.status == 200
+            assert server.registry.snapshot()
+            release_cleanup.set()
+            await _wait_for_release(server)
+            assert router.end_calls == 1
+        finally:
+            release_processing.set()
+            release_cleanup.set()
+            if work is not None:
+                await work
+            await client.close()
+            server.shutdown()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=15))
+
+
+def test_shutdown_preserves_cleanup_already_waiting_for_reserved_worker():
+    async def scenario():
+        entered = threading.Event()
+        release = threading.Event()
+        cleanup_started = []
+
+        class SlowCleanupRouter(FakeRouter):
+            def route_request(self, agent_id, operation, conversation_id, message_data):
+                if operation == "end_conversation":
+                    cleanup_started.append(conversation_id)
+                    entered.set()
+                    assert release.wait(5)
+                return super().route_request(
+                    agent_id, operation, conversation_id, message_data
+                )
+
+        router = SlowCleanupRouter()
+        server = WebSocketGatewayServer(router, allow_unauthenticated_local_dev=True)
+        client = await _client_for(server)
+        try:
+            voices = [await client.ws_connect("/v1/va") for _ in range(2)]
+            for index, voice in enumerate(voices):
+                await voice.send_json(_start(conversation_id=f"call-{index}"))
+                await voice.receive_json()
+            await voices[0].close()
+            assert await asyncio.to_thread(entered.wait, 2)
+            await voices[1].close()
+            # Ensure the second handler has entered finalization before shutdown.
+            for _ in range(100):
+                if len(server._cleanup_tasks) == 2:
+                    break
+                await asyncio.sleep(0.01)
+            assert len(server._cleanup_tasks) == 2
+            assert len(cleanup_started) == 1
+            server.shutdown()
+            release.set()
+            await _wait_for_release(server)
+            assert router.end_calls == 2
+            assert set(cleanup_started) == {"call-0", "call-1"}
+        finally:
+            release.set()
+            await client.close()
+            server.shutdown()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=15))
+
+
+def test_failed_connector_work_and_submission_release_capacity():
+    async def scenario():
+        server = WebSocketGatewayServer(
+            FakeRouter(),
+            allow_unauthenticated_local_dev=True,
+            connector_max_workers=1,
+            connector_max_pending=0,
+        )
+
+        def fail():
+            raise ValueError("provider failed")
+
+        try:
+            with pytest.raises(ValueError, match="provider failed"):
+                await server._run_bounded(fail)
+            assert await server._run_bounded(lambda: "recovered") == "recovered"
+            server.shutdown()
+            for _ in range(2):
+                with pytest.raises(RuntimeError, match="cannot schedule"):
+                    await server._run_bounded(lambda: None, wait_seconds=0)
+        finally:
+            server.shutdown()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=5))
+
+
+def test_disconnect_waits_for_late_provider_registration_without_delaying_other_cleanup():
+    async def scenario():
+        starting = threading.Event()
+        release_start = threading.Event()
+        other_ended = threading.Event()
+        provider_sessions = set()
+
+        class DelayedStartRouter(FakeRouter):
+            def route_request(self, agent_id, operation, conversation_id, message_data):
+                if operation == "start_conversation":
+                    if conversation_id == "slow-start":
+                        starting.set()
+                        assert release_start.wait(5)
+                    provider_sessions.add(conversation_id)
+                elif operation == "end_conversation":
+                    provider_sessions.discard(conversation_id)
+                result = super().route_request(
+                    agent_id, operation, conversation_id, message_data
+                )
+                if operation == "end_conversation" and conversation_id == "other":
+                    other_ended.set()
+                return result
+
+        router = DelayedStartRouter()
+        server = WebSocketGatewayServer(router, allow_unauthenticated_local_dev=True)
+        client = await _client_for(server)
+        try:
+            slow = await client.ws_connect("/v1/va")
+            await slow.send_json(_start(conversation_id="slow-start"))
+            assert await asyncio.to_thread(starting.wait, 2)
+            other = await client.ws_connect("/v1/va")
+            await other.send_json(_start(conversation_id="other"))
+            await other.receive_json()
+            await slow.close()
+            await other.close()
+            assert await asyncio.to_thread(other_ended.wait, 2)
+            assert router.end_calls == 1
+            assert server.registry.get(("org-1", "slow-start")) is not None
+            release_start.set()
+            await _wait_for_release(server)
+            assert router.end_calls == 2
+            assert not provider_sessions
+        finally:
+            release_start.set()
+            await client.close()
+            server.shutdown()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=15))
+
+
+@pytest.mark.parametrize("work_state", ["cancelled", "failed"])
+def test_finalizer_ends_existing_provider_after_work_cancellation_or_failure(
+    work_state,
+):
+    async def scenario():
+        server = WebSocketGatewayServer(
+            FakeRouter(), allow_unauthenticated_local_dev=True
+        )
+        lease = server.registry.acquire(
+            customer_org_id="org-1",
+            conversation_id="call-1",
+            transport="websocket",
+            agent_id="Test Agent",
+            connection_id="socket-1",
+        )
+        provider_sessions = {"call-1"}
+        cleanup_calls = []
+
+        def cleanup(reason):
+            provider_sessions.remove("call-1")
+            cleanup_calls.append(reason)
+
+        work = Future()
+        if work_state == "cancelled":
+            work.cancel()
+        else:
+            work.set_exception(RuntimeError("provider work failed"))
+        try:
+            await server._finalize_conversation(
+                SimpleNamespace(cleanup=cleanup), None, lease, "gateway_shutdown", work
+            )
+            assert cleanup_calls == ["gateway_shutdown"]
+            assert not provider_sessions
+            assert not server.registry.snapshot()
+        finally:
+            server.shutdown()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=5))

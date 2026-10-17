@@ -231,3 +231,24 @@ def test_wav_final_rejects_raw_audio_and_chunk_responses():
     )
     with pytest.raises(UnsupportedMediaError, match="CHUNK"):
         frame_response_payloads(chunk, output_mode="wav_final")
+
+
+@pytest.mark.parametrize("chunk_size", [100, 3200, 65_536])
+@pytest.mark.parametrize("tail_size", [1, 99, 100])
+def test_raw_chunk_boundaries_preserve_audio_and_wire_limits(chunk_size, tail_size):
+    audio = bytes(range(256)) * (chunk_size // 256 + 1)
+    audio = audio[:chunk_size] + b"x" * tail_size
+    response = VoiceVAResponse(
+        prompts=[Prompt(audio_content=audio)], response_type=VoiceVAResponse.FINAL
+    )
+    payloads = frame_response_payloads(
+        response, output_mode="raw_chunk", chunk_size=chunk_size
+    )
+    chunks = [
+        base64.b64decode(item["prompts"][0]["audio_content_b64"])
+        for item in payloads[:-1]
+    ]
+    assert all(100 <= len(chunk) <= 65_536 for chunk in chunks)
+    assert b"".join(chunks) == audio
+    assert payloads[-1]["response_type"] == "FINAL"
+    assert payloads[-1]["prompts"][0]["audio_content_b64"] == ""

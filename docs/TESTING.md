@@ -50,11 +50,19 @@ python -m pytest \
   tests/test_conversation_registry.py \
   tests/test_websocket_models.py \
   tests/test_websocket_adapter.py \
-  tests/test_websocket_server.py
+  tests/test_websocket_server.py \
+  tests/test_gecx_websocket_connector.py \
+  tests/test_main_websocket.py \
+  tests/test_virtual_agent_router.py
 ```
 
 It uses local aiohttp test listeners and fake providers; it does not call Webex,
 AWS, or another external service.
+
+The socket tests also exercise cancelled worker admission, cleanup under worker
+saturation, queued cleanup during shutdown, and audio chunk size boundaries.
+Follow [WebSocket Live Testing](WEBSOCKET_LIVE_TESTING.md) after the local suite;
+local test success does not establish live WxCC or CES acceptance.
 
 List collected tests:
 
