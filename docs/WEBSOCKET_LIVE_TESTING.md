@@ -16,7 +16,7 @@ interleaved input-boundary events. The deployed image passed its registry scan
 with no reported findings; gateway tests passed (644 tests), and caller-tool
 tests passed (118 tests).
 
-## Observed development results (October 17, 2026)
+## Observed development results (October 17–18, 2026)
 
 | Check | Observed result |
 | --- | --- |
@@ -25,7 +25,7 @@ tests passed (118 tests).
 | Natural pause | With the optional fast recognition endpoint disabled, a 1.8-second pause stays in one gateway turn and CES updates recognition to the complete utterance. |
 | Authentication | Anonymous discovery/upgrade and invalid-token discovery return 401. |
 | Retained gRPC control | Two recognized caller turns passed on the independent retained service. |
-| Local Audio DTMF | Failed through the live caller route: browser tone generation completes, but no DTMF reaches the gateway. Digits 5, 6, and a terminator probe were tested. Local socket coverage passes. |
+| Local Audio DTMF | The official Calling sample delivered 5 (transfer) and 6 (session end plus remote disconnect). Three other calls failed despite sender tone events. Delivery remains intermittent; failures correlate with earlier speech END_OF_INPUT. |
 
 The private development profile permits interruption of autonomous CES
 reprompts and uses an agent-specific caller prompt gate. Greetings and
@@ -34,12 +34,24 @@ The former 200 ms recognition-assisted override cut off the second half of the
 pause fixture; the target now uses the reference configuration's normal pause
 window. Recheck latency when changing endpointing settings.
 
-Live DTMF delivery remains an acceptance blocker. Trace digit collection from
-the calling client through WxCC before attributing it to the gateway; the
-observed input frames contain no DTMF. Flow Designer's handoff variable value,
+Reliable live DTMF delivery remains an acceptance blocker. Failed calls contain
+no gateway DTMF input, while successful calls prove the JSON/protobuf conversion
+and Local Audio handlers work. Hold digit, media and duration fixed while varying
+submission before/after speech endpointing; the observed correlation does not
+establish a root cause. Flow Designer's handoff variable value,
 active-call shutdown/drain, and load behavior still need their own live checks.
 Keep exact call artifacts, configuration fingerprints, and deployment identities
 in the private handoff rather than this shared repository.
+
+## Lex WebSocket adapter: local validation only
+
+`AWSLexWebSocketConnector` is a separate WxCC-facing adapter with distinct bot
+discovery IDs. It shares the existing utterance-buffered Lex provider and emits
+complete WAV `FINAL` responses. Local tests cover discovery and transport
+isolation, voice, DTMF mapping, SDK request validation and disconnect cleanup.
+The AWS SDK baseline is Boto3/Botocore 1.43.114 and S3Transfer 0.19.2.
+This adapter has not been deployed or validated through a real WxCC-to-Lex call.
+See [Lex setup](AWS_LEX_CONFIGURATION.md#separate-websocket-adapter).
 
 ## 1. Establish the local baseline
 

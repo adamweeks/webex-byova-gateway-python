@@ -100,6 +100,12 @@ connectors:
 
 **Purpose**: Integration with Amazon Lex v2 for virtual agent capabilities
 
+`AWSLexConnector` defaults to WxCC gRPC. The separate
+`AWSLexWebSocketConnector` in `aws_lex_websocket_connector.py` defaults to WxCC
+WebSocket, with its own discovery prefix and session state. Both share the
+utterance-buffered Lex `RecognizeUtterance` provider. See the
+[WebSocket adapter configuration](../../docs/AWS_LEX_CONFIGURATION.md#separate-websocket-adapter).
+
 **Features**:
 - Connects to existing AWS Lex v2 instances
 - Automatically discovers and lists available Lex bots as agents
@@ -123,8 +129,7 @@ connectors:
     config:
       region_name: "us-east-1"  # Your AWS region
       # Note: Bot aliases are discovered automatically. The connector uses the most recent alias for each bot.
-      aws_access_key_id: "YOUR_DEV_ACCESS_KEY"  # Explicit AWS access key (for dev only)
-      aws_secret_access_key: "YOUR_DEV_SECRET_KEY"  # Explicit AWS secret (for dev only)
+      # AWS credentials come from the SDK credential chain, never this YAML.
       initial_trigger_text: "hello"  # Text sent when starting conversation (default: "hello")
       barge_in_enabled: false
       audio_logging:

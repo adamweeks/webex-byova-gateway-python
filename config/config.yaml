@@ -109,6 +109,20 @@ connectors:
         encoding: "ulaw"
       agents: []
 
+  # Separate WxCC WebSocket adapter for the same Lex bots. AWSLexConnector
+  # remains gRPC-only; distinct catalog IDs prevent collisions in combined mode.
+  # aws_lex_websocket_connector:
+  #   type: "aws_lex_websocket_connector"
+  #   class: "AWSLexWebSocketConnector"
+  #   module: "connectors.aws_lex_websocket_connector"
+  #   supported_transports: ["websocket"]
+  #   config:
+  #     region_name: "us-east-1"
+  #     initial_trigger_text: "hello"
+  #     barge_in_enabled: false
+  #     audio_logging:
+  #       enabled: false
+
   # Google CX Agent Studio (GECX / CES BidiRunSession)
   # gecx_connector:
   #   type: "gecx_connector"

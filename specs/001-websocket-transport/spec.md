@@ -35,7 +35,15 @@ The native CES connector uses the allow-listed authenticated WebSocket endpoint
 and reuses GECX audio/lifecycle behavior. Separate agent identities distinguish
 CES gRPC and CES WebSocket when both are configured.
 
-## Requirements
+### US5: Select a separate Lex WebSocket adapter (P2)
+
+`AWSLexWebSocketConnector` advertises only the WxCC WebSocket transport and
+uses a distinct bot-ID namespace from `AWSLexConnector`. Both share the Lex
+RecognizeUtterance provider and retain independent session state. The WebSocket
+adapter buffers caller utterances, returns complete WAV FINAL responses, and
+converts BYOVA DTMF enums into their actual telephony symbols.
+
+## Functional requirements
 
 - FR-001: Use separate strict WebSocket JSON models and an adapter to the shared engine.
 - FR-002: Enforce JWT before upgrade, bounded frames/queues/work, stable session identity,
@@ -44,6 +52,8 @@ CES gRPC and CES WebSocket when both are configured.
 - FR-004: Keep worker accounting correct through cancellation and cleanup off the event loop.
 - FR-005: Frame audio directly from provider bytes without redundant base64 round trips.
 - FR-006: Preserve gRPC behavior and build runtime artifacts only from allowlisted paths.
+- FR-007: Keep the Lex adapters independently discoverable and validate their shared
+  AWS SDK request contract, audio buffering, DTMF conversion and disconnect cleanup.
 
 ## Success criteria
 
@@ -57,6 +67,8 @@ CES gRPC and CES WebSocket when both are configured.
 
 ## Scope boundaries
 
-No deployment, PR, merge, new provider opt-ins, or production-readiness claim is
-part of this local-ready change. Live testing and private target changes remain
-pending for the operator's return.
+The original baseline did not opt in additional providers. The October 18 Lex
+extension adds a separate, explicitly configured WebSocket adapter and local
+validation. It does not deploy the adapter, create a PR, or claim live Lex
+acceptance. Earlier GECX live evidence is recorded in the acceptance matrix;
+remaining live checks still require correlated evidence.

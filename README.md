@@ -254,7 +254,11 @@ production without the controls described in the production guide.
 - **Local Audio**: Uses the included WAV files for local development and vendor-neutral
   end-to-end validation over gRPC or WebSocket. See
   [Local Audio Connector Configuration](docs/LOCAL_AUDIO_CONFIGURATION.md).
-- **AWS Lex**: Connects to Amazon Lex V2 through the standard AWS SDK credential chain.
+- **AWS Lex**: Separate `AWSLexConnector` (WxCC gRPC) and
+  `AWSLexWebSocketConnector` (WxCC WebSocket) adapters share Amazon Lex V2
+  `RecognizeUtterance`, the standard AWS SDK credential chain, and audio/session
+  handling. The WebSocket adapter uses complete WAV responses and distinct
+  discovery IDs. See [Lex configuration](docs/AWS_LEX_CONFIGURATION.md).
 - **Google CX Agent Studio**: Streams caller audio to Gemini Enterprise for Customer
   Experience through CES `BidiRunSession`. `GECXConnector` uses the CES gRPC
   client; `GECXWebSocketConnector` uses Google's native JSON WebSocket gateway

@@ -28,6 +28,7 @@ REQUIRED_MEMBERS = {
     "src/generated/voicevirtualagent_pb2.py",
     "src/generated/voicevirtualagent_pb2_grpc.py",
     "src/core/conversation_registry.py",
+    "src/connectors/aws_lex_websocket_connector.py",
     "src/transports/__init__.py",
     "src/transports/websocket_adapter.py",
     "src/transports/websocket_models.py",

@@ -599,6 +599,7 @@ When analyzing this codebase as an AI agent:
 - `src/connectors/local_audio_connector.py` - Working example connector
 - `src/connectors/gecx_connector.py` - CES gRPC provider connector and shared GECX behavior
 - `src/connectors/gecx_websocket_connector.py` - Native CES WebSocket provider connector
+- `src/connectors/aws_lex_websocket_connector.py` - WxCC WebSocket adapter sharing the existing Lex RecognizeUtterance provider
 - `src/core/wxcc_gateway_server.py` - Main gRPC server implementation
 - `src/transports/websocket_server.py` - WebSocket listener and lifecycle
 - `src/transports/websocket_models.py` - Strict concrete wire models

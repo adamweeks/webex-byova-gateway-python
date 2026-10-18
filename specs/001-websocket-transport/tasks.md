@@ -19,7 +19,13 @@
 - [x] T010 [US2] Run full local suites, lint/format, and real-listener smoke checks (SC-001–003).
 - [x] T011 [US3] Complete self-review and verify the final committed runtime archive (FR-006).
 
-## Live acceptance — operator follow-up
+## Lex adapter extension (October 18)
+
+- [x] T017 [US5] Add the separate Lex WebSocket adapter and collision-free discovery IDs.
+- [x] T018 [US5] Validate the current AWS SDK, socket voice/DTMF behavior and local cleanup.
+- [ ] T019 [US5] Deploy the Lex adapter to the approved dev target and run real WxCC-to-Lex calls.
+
+## Remaining baseline live acceptance
 
 - [ ] T012 [US1] Verify the intended private target, deployed commit, JWT, and discovery.
 - [ ] T013 [US2] Run Local Audio DTMF transfer/session-end tests with gateway evidence.

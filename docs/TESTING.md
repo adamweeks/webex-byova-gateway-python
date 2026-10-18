@@ -52,6 +52,7 @@ python -m pytest \
   tests/test_websocket_adapter.py \
   tests/test_websocket_server.py \
   tests/test_gecx_websocket_connector.py \
+  tests/test_aws_lex_websocket_connector.py \
   tests/test_main_websocket.py \
   tests/test_virtual_agent_router.py
 ```

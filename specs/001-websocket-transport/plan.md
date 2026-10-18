@@ -7,6 +7,14 @@ listener; Pydantic defines wire models; the existing protobuf-based conversation
 engine and connector router remain shared. Native CES WebSocket is a separate
 GECX connector subclass. No new dependency is needed for readiness fixes.
 
+The October 18 extension adds a separate Lex WebSocket adapter over the shared
+RecognizeUtterance provider. It introduces no new package, updates the AWS SDK
+minimum versions to the tested stable set, separates discovery namespaces, and
+retains Lex's ten-digit collection policy on WebSocket responses. Tests cover
+the shared DTMF symbol conversion, real SDK request models with Stubber, and
+socket discovery/voice/DTMF/disconnect using fake AWS responses (FR-003, FR-006,
+FR-007). Real WxCC-to-Lex acceptance remains pending.
+
 ## Constitution check
 
 The change preserves the reference purpose, explicit transport boundary, existing

@@ -160,8 +160,12 @@ WebSocket. Configure the separate `GECXWebSocketConnector` and use a distinct
 agent ID when both the WxCC and CES connections should use WebSocket.
 
 - GECX and Local Audio declare `raw_chunk`.
-- AWS Lex declares `wav_final`, but remains gRPC-only until explicitly reviewed
-  and enabled for the WebSocket transport.
+- `AWSLexConnector` remains gRPC-only. The separate `AWSLexWebSocketConnector`
+  advertises only WebSocket and uses `wav_final`. Both share the same
+  utterance-buffered Lex `RecognizeUtterance` implementation; the WebSocket
+  adapter does not implement the provider's HTTP/2 `StartConversation` stream.
+  Their discovery IDs use distinct `aws_lex_connector:` and
+  `aws_lex_websocket_connector:` prefixes. See [Lex configuration](AWS_LEX_CONFIGURATION.md).
 - Existing third-party connectors that do not declare the optional capability
   default to `raw_chunk`, preserving their source compatibility.
 
