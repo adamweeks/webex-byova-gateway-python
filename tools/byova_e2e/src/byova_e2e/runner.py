@@ -374,6 +374,10 @@ class BrowserRunner:
                 call_deadline,
                 last_input,
                 wait_for_disconnect=(step.outcome == ExpectedOutcome.SESSION_END),
+                allow_disconnect=(
+                    step.outcome == ExpectedOutcome.TRANSFER
+                    and step.connected_observation_seconds == 0
+                ),
                 expected_response_prompts=step.response_prompts,
                 prefetched_events=events_during_injection,
                 ignore_current_prompt=prior_response_active,
@@ -418,6 +422,11 @@ class BrowserRunner:
                     step_results,
                 )
             if step.outcome == ExpectedOutcome.TRANSFER:
+                if observation.disconnect_event is not None:
+                    return self._scenario_result(
+                        "remote_disconnect", observations,
+                        observation.disconnect_event, step_results,
+                    )
                 if step.connected_observation_seconds > 0:
                     self._assert_call_remains_connected(
                         server,
@@ -635,6 +644,10 @@ class BrowserRunner:
                 call_deadline,
                 injection_finished,
                 wait_for_disconnect=expected_outcome == ExpectedOutcome.SESSION_END,
+                allow_disconnect=(
+                    expected_outcome == ExpectedOutcome.TRANSFER
+                    and self.config.connected_observation_seconds == 0
+                ),
             )
             gateway_terminal_event = self._assert_gateway_outcome(
                 expected_outcome or ExpectedOutcome.RESPONSE,
@@ -644,7 +657,10 @@ class BrowserRunner:
                     wait_for_normal=True,
                 ),
             )
-            if expected_outcome == ExpectedOutcome.SESSION_END:
+            if expected_outcome == ExpectedOutcome.SESSION_END or (
+                expected_outcome == ExpectedOutcome.TRANSFER
+                and observation.disconnect_event is not None
+            ):
                 disconnect = observation.disconnect_event
                 if disconnect is None:
                     raise RunFailure(
@@ -733,6 +749,7 @@ class BrowserRunner:
         injection_finished: RunEvent,
         *,
         wait_for_disconnect: bool = False,
+        allow_disconnect: bool = False,
         expected_response_prompts: int | None = None,
         prefetched_events: tuple[RunEvent, ...] = (),
         ignore_current_prompt: bool = False,
@@ -773,7 +790,14 @@ class BrowserRunner:
                         )
                     continue
                 if event.name == "disconnect":
-                    if wait_for_disconnect and first_active is not None:
+                    normal_remote_disconnect = (
+                        event.details.get("code") == 0
+                        and event.details.get("initiatedByCaller") is False
+                    )
+                    if first_active is not None and (
+                        wait_for_disconnect
+                        or (allow_disconnect and normal_remote_disconnect)
+                    ):
                         if remote_active or quiet_since is not None:
                             prompt_count += 1
                         if prompt_count >= required_prompts:

@@ -590,3 +590,55 @@ def test_gateway_event_mismatch_becomes_run_failure(tmp_path) -> None:
 
     with pytest.raises(RunFailure, match="terminal outcome mismatch"):
         runner._assert_gateway_outcome(ExpectedOutcome.TRANSFER, 0)
+
+
+@pytest.mark.parametrize("steps_mode", [False, True])
+@pytest.mark.parametrize("outcome,prompts,connected_seconds,code,passes", [
+    (ExpectedOutcome.TRANSFER, 1, 0, 0, True),
+    (ExpectedOutcome.TRANSFER, 2, 0, 0, False),
+    (ExpectedOutcome.TRANSFER, 1, 1, 0, False),
+    (ExpectedOutcome.RESPONSE, 1, 0, 0, False),
+    (ExpectedOutcome.TRANSFER, 1, 0, 500, False),
+])
+def test_terminal_disconnect_before_silence_window(
+    tmp_path, steps_mode, outcome, prompts, connected_seconds, code, passes
+):
+    """Transfer may disconnect after its announcement; normal calls must stay up."""
+    config = replace(
+        _config(tmp_path), expected_outcome=outcome,
+        expected_response_prompts=prompts,
+        connected_observation_seconds=connected_seconds,
+        response_timeout_seconds=1, remote_silence_seconds=2.5,
+        audio_assets=_audio_assets(tmp_path, 1),
+        steps=(RunAction(0), RunExpectation(
+            outcome, response_prompts=prompts,
+            connected_observation_seconds=connected_seconds,
+        )) if steps_mode else (),
+    )
+    runner = BrowserRunner(tmp_path, config)
+    gateway_event = {"outcome": "TRANSFER_TO_AGENT", "conversation_id": "conversation-1"}
+    observer = _GatewayObserver(result=gateway_event)
+    runner._gateway_events = observer
+    runner._wait_for_prompt_end = lambda *args: "fixture"
+    injection = RunEvent("injection_finished", 10, {"injectionIndex": 0})
+    server = _EventServer(
+        ([injection] if steps_mode else []) + [
+            RunEvent("remote_audio_active", 12),
+            RunEvent("remote_audio_inactive", 14),
+            RunEvent("disconnect", 15, {"code": code, "initiatedByCaller": False}),
+        ]
+    )
+    page = _CommandPage()
+    def execute():
+        if steps_mode:
+            return runner._execute_steps(server, page, time.monotonic() + 2)
+        return runner._finish_call(server, page, time.monotonic() + 2, injection)
+    if not passes:
+        with pytest.raises(RunFailure, match="before the required remote response"):
+            execute()
+        return
+    result = execute()
+    assert result["completion_reason"] == "remote_disconnect"
+    assert result["gateway_terminal_event"] == gateway_event
+    assert observer.calls[0][0] == ExpectedOutcome.TRANSFER
+    assert not any(c["command"] == "endCall" for c in page.commands)
