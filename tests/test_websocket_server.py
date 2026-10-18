@@ -771,9 +771,12 @@ def test_server_initiated_close_releases_lease_and_cleans_provider_once():
     asyncio.run(asyncio.wait_for(scenario(), timeout=20))
 
 
+@pytest.mark.parametrize("barge_in_enabled", [False, True])
 @pytest.mark.parametrize("boundary", [None, "START_OF_INPUT", "END_OF_INPUT"])
 @pytest.mark.parametrize("final_kind", ["silence", "transfer", "session_end"])
-def test_streamed_audio_final_contains_explicit_empty_audio(boundary, final_kind):
+def test_streamed_audio_final_contains_explicit_empty_audio(
+    boundary, final_kind, barge_in_enabled
+):
     """A streamed connector's prompt-less FINAL must finish WxCC playback."""
 
     async def scenario():
@@ -790,7 +793,7 @@ def test_streamed_audio_final_contains_explicit_empty_audio(boundary, final_kind
                     "message_type": "agent_response",
                     "text": "",
                     "audio_content": b"a" * 320,
-                    "barge_in_enabled": True,
+                    "barge_in_enabled": barge_in_enabled,
                     "response_type": "chunk",
                 },
             )
@@ -804,7 +807,17 @@ def test_streamed_audio_final_contains_explicit_empty_audio(boundary, final_kind
                         "output_events": [{"event_type": boundary}],
                     },
                 )
-                assert "prompts" not in (await socket.receive_json())["payload"]
+                if boundary == "START_OF_INPUT":
+                    interrupted = await socket.receive_json()
+                    assert interrupted["payload"] == {
+                        "response_type": "FINAL",
+                        "prompts": [{"audio_content_b64": "", "is_barge_in_enabled": barge_in_enabled}],
+                    }
+                    input_event = await socket.receive_json()
+                    assert input_event["seq"] == interrupted["seq"] + 1
+                    assert "prompts" not in input_event["payload"]
+                else:
+                    assert "prompts" not in (await socket.receive_json())["payload"]
             for index in range(2 if final_kind == "silence" else 1):
                 assert await asyncio.to_thread(
                     router.async_sink,
@@ -814,15 +827,30 @@ def test_streamed_audio_final_contains_explicit_empty_audio(boundary, final_kind
                     },
                 )
                 final = (await socket.receive_json())["payload"]
-                if index == 0:
+                if index == 0 and boundary != "START_OF_INPUT":
                     assert final["prompts"] == [
                         {
                             "audio_content_b64": "",
-                            "is_barge_in_enabled": final_kind == "silence",
+                            "is_barge_in_enabled": barge_in_enabled and final_kind == "silence",
                         }
                     ]
                 else:
                     assert "prompts" not in final
+            if boundary == "START_OF_INPUT" and final_kind == "silence":
+                assert await asyncio.to_thread(
+                    router.async_sink,
+                    {"message_type": "agent_response", "text": "", "audio_content": b"next" * 80,
+                     "response_type": "chunk"},
+                )
+                next_chunk = await socket.receive_json()
+                assert next_chunk["payload"]["response_type"] == "CHUNK"
+                assert await asyncio.to_thread(
+                    router.async_sink,
+                    {"message_type": "silence", "response_type": "final"},
+                )
+                next_final = await socket.receive_json()
+                assert next_final["seq"] == next_chunk["seq"] + 1
+                assert next_final["payload"]["prompts"][0]["audio_content_b64"] == ""
             await socket.close()
             await _wait_for_release(server)
         finally:

@@ -685,6 +685,25 @@ class WebSocketGatewayServer:
                         else:
                             payload = item.payload or {}
                             if output_mode == "raw_chunk":
+                                if stream_terminator is not None and any(
+                                    event.get("event_type") == "START_OF_INPUT"
+                                    for event in payload.get("output_events", [])
+                                ):
+                                    # Caller speech can abandon an autonomous provider turn.
+                                    # Close its audio before the standalone input event.
+                                    await socket.send_json(
+                                        envelope(
+                                            message_type="VOICE_VA_RESPONSE",
+                                            seq=server_seq,
+                                            conversation_id=lease.conversation_id,
+                                            payload={
+                                                "response_type": "FINAL",
+                                                "prompts": [stream_terminator],
+                                            },
+                                        )
+                                    )
+                                    server_seq += 1
+                                    stream_terminator = None
                                 if payload.get("response_type") == "CHUNK" and any(
                                     prompt.get("audio_content_b64")
                                     for prompt in payload.get("prompts", [])
