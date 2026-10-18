@@ -771,6 +771,67 @@ def test_server_initiated_close_releases_lease_and_cleans_provider_once():
     asyncio.run(asyncio.wait_for(scenario(), timeout=20))
 
 
+@pytest.mark.parametrize("boundary", [None, "START_OF_INPUT", "END_OF_INPUT"])
+@pytest.mark.parametrize("final_kind", ["silence", "transfer", "session_end"])
+def test_streamed_audio_final_contains_explicit_empty_audio(boundary, final_kind):
+    """A streamed connector's prompt-less FINAL must finish WxCC playback."""
+
+    async def scenario():
+        router = FakeRouter()
+        server = WebSocketGatewayServer(router, allow_unauthenticated_local_dev=True)
+        client = await _client_for(server)
+        try:
+            socket = await client.ws_connect("/v1/va")
+            await socket.send_json(_start())
+            await socket.receive_json()
+            assert await asyncio.to_thread(
+                router.async_sink,
+                {
+                    "message_type": "agent_response",
+                    "text": "",
+                    "audio_content": b"a" * 320,
+                    "barge_in_enabled": True,
+                    "response_type": "chunk",
+                },
+            )
+            assert (await socket.receive_json())["payload"]["response_type"] == "CHUNK"
+            if boundary:
+                assert await asyncio.to_thread(
+                    router.async_sink,
+                    {
+                        "message_type": "silence",
+                        "response_type": "final",
+                        "output_events": [{"event_type": boundary}],
+                    },
+                )
+                assert "prompts" not in (await socket.receive_json())["payload"]
+            for index in range(2 if final_kind == "silence" else 1):
+                assert await asyncio.to_thread(
+                    router.async_sink,
+                    {
+                        "message_type": final_kind,
+                        "response_type": "final",
+                    },
+                )
+                final = (await socket.receive_json())["payload"]
+                if index == 0:
+                    assert final["prompts"] == [
+                        {
+                            "audio_content_b64": "",
+                            "is_barge_in_enabled": final_kind == "silence",
+                        }
+                    ]
+                else:
+                    assert "prompts" not in final
+            await socket.close()
+            await _wait_for_release(server)
+        finally:
+            await client.close()
+            server.shutdown()
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=20))
+
+
 def test_async_connector_transfer_enters_terminal_state():
     """A transfer delivered through the async sink ends the agent leg."""
 

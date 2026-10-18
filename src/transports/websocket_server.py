@@ -651,6 +651,7 @@ class WebSocketGatewayServer:
 
             async def sender() -> None:
                 server_seq = 0
+                stream_terminator = None
                 while not stop.is_set() or not outbound.empty():
                     try:
                         item = await asyncio.wait_for(outbound.get(), timeout=0.1)
@@ -682,11 +683,43 @@ class WebSocketGatewayServer:
                             )
                             value.pop("payload")
                         else:
+                            payload = item.payload or {}
+                            if output_mode == "raw_chunk":
+                                if payload.get("response_type") == "CHUNK" and any(
+                                    prompt.get("audio_content_b64")
+                                    for prompt in payload.get("prompts", [])
+                                ):
+                                    stream_terminator = {
+                                        "audio_content_b64": "",
+                                        "is_barge_in_enabled": payload["prompts"][-1].get(
+                                            "is_barge_in_enabled", False
+                                        ),
+                                    }
+                                elif (
+                                    stream_terminator is not None
+                                    and payload.get("response_type") == "FINAL"
+                                    and not any(
+                                        event.get("event_type") in {"START_OF_INPUT", "END_OF_INPUT"}
+                                        for event in payload.get("output_events", [])
+                                    )
+                                ):
+                                    # A prompt-less connector FINAL must release WxCC playback.
+                                    prompts = payload.get("prompts") or [stream_terminator]
+                                    for prompt in prompts:
+                                        if not prompt.get("audio_uri"):
+                                            prompt.setdefault("audio_content_b64", "")
+                                        if any(
+                                            event.get("event_type") in {"SESSION_END", "TRANSFER_TO_AGENT"}
+                                            for event in payload.get("output_events", [])
+                                        ):
+                                            prompt["is_barge_in_enabled"] = False
+                                    payload["prompts"] = prompts
+                                    stream_terminator = None
                             value = envelope(
                                 message_type=item.message_type,
                                 seq=server_seq,
                                 conversation_id=lease.conversation_id,
-                                payload=item.payload or {},
+                                payload=payload,
                             )
                         await socket.send_json(value)
                     finally:
