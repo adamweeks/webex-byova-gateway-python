@@ -1,9 +1,45 @@
 # Resume WebSocket live testing
 
-The WebSocket transport and native CES connector are implemented. This handoff
-targets **local-ready**: implementation, regression tests, and a testing plan.
-Live acceptance remains pending until the checks below pass on the intended
-deployed commit. This gateway remains functional sample code.
+The WebSocket transport and native CES connector are implemented. The October
+17, 2026 development rollout runs runtime commit `cda96b7`. A real WxCC call
+completed two caller turns over native CES WebSocket, with both turns confirmed
+by provider recognition events. A retained gRPC control also completed two
+recognized turns. Full live acceptance still requires the remaining matrix
+checks below. This gateway remains functional sample code.
+
+The live run exposed a streamed-prompt boundary defect: provider audio CHUNKs
+could finish with a prompt-less FINAL, leaving WxCC in playback and dropping
+caller input. The sender now terminates that stream with explicit empty audio, including
+an abandoned stream before caller speech starts. Its synthetic FINAL preserves
+the previous audio frame's input collection settings. Local regression coverage includes normal and terminal responses, including
+interleaved input-boundary events. The deployed image passed its registry scan
+with no reported findings; gateway tests passed (644 tests), and caller-tool
+tests passed (118 tests).
+
+## Observed development results (October 17, 2026)
+
+| Check | Observed result |
+| --- | --- |
+| Native CES WebSocket | Two recognized caller turns, a long recognized request with streamed output, and goodbye with remote disconnect. Normal-response latency was 3.09 seconds against a six-second target. |
+| Transfer | Recognized request, `TRANSFER_TO_AGENT`, forwarded summary metadata, and the configured WxCC announcement. This proves gateway escalation, not a staffed-agent handoff. |
+| Natural pause | With the optional fast recognition endpoint disabled, a 1.8-second pause stays in one gateway turn and CES updates recognition to the complete utterance. |
+| Authentication | Anonymous discovery/upgrade and invalid-token discovery return 401. |
+| Retained gRPC control | Two recognized caller turns passed on the independent retained service. |
+| Local Audio DTMF | Failed through the live caller route: browser tone generation completes, but no DTMF reaches the gateway. Digits 5, 6, and a terminator probe were tested. Local socket coverage passes. |
+
+The private development profile permits interruption of autonomous CES
+reprompts and uses an agent-specific caller prompt gate. Greetings and
+caller-triggered replies retain their existing non-interruptible behavior.
+The former 200 ms recognition-assisted override cut off the second half of the
+pause fixture; the target now uses the reference configuration's normal pause
+window. Recheck latency when changing endpointing settings.
+
+Live DTMF delivery remains an acceptance blocker. Trace digit collection from
+the calling client through WxCC before attributing it to the gateway; the
+observed input frames contain no DTMF. Flow Designer's handoff variable value,
+active-call shutdown/drain, and load behavior still need their own live checks.
+Keep exact call artifacts, configuration fingerprints, and deployment identities
+in the private handoff rather than this shared repository.
 
 ## 1. Establish the local baseline
 
@@ -102,6 +138,12 @@ Keep recordings, transcripts, raw logs, and private deployment details in the
 approved private evidence location.
 
 A caller recording alone does not prove provider cleanup or handoff metadata.
+For every speech scenario, confirm the expected number of provider recognition
+events as well as caller audio. An autonomous no-input reprompt can satisfy an
+audio-only response expectation even when the caller utterance was discarded.
+Tune the private profile's remote-silence gate for the selected agent. Short
+intervals can inject within a greeting; long intervals can overlap a no-input
+reprompt. Record that interval with the configuration fingerprint.
 Mark each matrix row pass/fail/pending and link its evidence. A provider cleanup
 that exceeds the drain budget is a failed shutdown check; Python cannot forcibly
 stop a blocked provider thread. Do not label the feature live-verified until

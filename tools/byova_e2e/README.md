@@ -430,15 +430,32 @@ Correlate each artifact window and config SHA-256 with gateway and CES evidence:
   live semantic gap explicitly.
 - `task-complete`: one correlated gateway `SESSION_END` output event before the
   remote disconnect.
-- `transfer`: one correlated gateway `TRANSFER_TO_AGENT` output event and both
-  configured post-input announcement epochs.
+- `transfer`: one correlated gateway `TRANSFER_TO_AGENT` output event and the
+  configured post-input announcement epochs. Match the count to the selected
+  agent and flow; some CES agents escalate without a spoken announcement. A
+  normal remote disconnect after the required audio is accepted when no
+  connected-observation interval is requested. A normal response, an error
+  disconnect, and a transfer required to stay connected still fail on early
+  disconnect.
 
 The latency target preserves the current evidence-backed endpointing tradeoff:
 gateway end-silence and speech-resume grace remain one second each, while GECX
 appends two seconds of codec-correct endpointing silence because one second left
-short CES turns open. The longer `remoteSilenceMs: 2500` used by long-response
-and multi-turn tests affects prompt-completion observation, not response-start
-latency.
+short CES turns open. The `remoteSilenceMs` threshold affects prompt-completion
+observation, not response-start latency. Tune it in a private profile for the selected agent: a
+short interval can inject during a welcome pause, while a long interval can
+overlap an autonomous no-input reprompt. With barge-in disabled, an early
+injection can be discarded by WxCC. An autonomous no-input reprompt can then
+satisfy an audio-only response expectation: a green caller result alone is not
+a speech-recognition pass. Correlate every expected caller turn with provider
+recognition evidence before accepting the scenario.
+
+If the selected CES agent starts a no-input reprompt immediately after its
+welcome, record whether the caller injection overlaps it. A non-interruptible
+reprompt can prevent the complete utterance reaching the gateway. Configure the
+existing autonomous-prompt `barge_in_enabled` option only when that behavior is
+intended, and retain the configuration fingerprint with the run; greeting and
+caller-triggered reply chunks remain non-interruptible.
 
 ## Safety boundaries
 
