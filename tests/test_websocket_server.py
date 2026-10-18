@@ -781,6 +781,11 @@ def test_streamed_audio_final_contains_explicit_empty_audio(
 
     async def scenario():
         router = FakeRouter()
+        router.get_dtmf_input_config = lambda *args: {
+            "dtmf_input_length": 7,
+            "inter_digit_timeout_msec": 7300,
+            "termchar": "DTMF_DIGIT_STAR",
+        }
         server = WebSocketGatewayServer(router, allow_unauthenticated_local_dev=True)
         client = await _client_for(server)
         try:
@@ -812,6 +817,13 @@ def test_streamed_audio_final_contains_explicit_empty_audio(
                     assert interrupted["payload"] == {
                         "response_type": "FINAL",
                         "prompts": [{"audio_content_b64": "", "is_barge_in_enabled": barge_in_enabled}],
+                        "input_mode": "INPUT_VOICE_DTMF",
+                        "input_handling_config": {
+                            "dtmf_config": {"dtmf_input_length": 7,
+                                            "inter_digit_timeout_msec": 7300,
+                                            "termchar": "DTMF_DIGIT_STAR"},
+                            "speech_timers": {"no_input_timeout_msec": 30000},
+                        },
                     }
                     input_event = await socket.receive_json()
                     assert input_event["seq"] == interrupted["seq"] + 1

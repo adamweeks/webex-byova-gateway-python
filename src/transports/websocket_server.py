@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -652,6 +653,7 @@ class WebSocketGatewayServer:
             async def sender() -> None:
                 server_seq = 0
                 stream_terminator = None
+                stream_collection_config = {}
                 while not stop.is_set() or not outbound.empty():
                     try:
                         item = await asyncio.wait_for(outbound.get(), timeout=0.1)
@@ -699,11 +701,13 @@ class WebSocketGatewayServer:
                                             payload={
                                                 "response_type": "FINAL",
                                                 "prompts": [stream_terminator],
+                                                **stream_collection_config,
                                             },
                                         )
                                     )
                                     server_seq += 1
                                     stream_terminator = None
+                                    stream_collection_config = {}
                                 if payload.get("response_type") == "CHUNK" and any(
                                     prompt.get("audio_content_b64")
                                     for prompt in payload.get("prompts", [])
@@ -713,6 +717,11 @@ class WebSocketGatewayServer:
                                         "is_barge_in_enabled": payload["prompts"][-1].get(
                                             "is_barge_in_enabled", False
                                         ),
+                                    }
+                                    stream_collection_config = {
+                                        key: deepcopy(payload[key])
+                                        for key in ("input_sensitive", "input_mode", "input_handling_config")
+                                        if key in payload
                                     }
                                 elif (
                                     stream_terminator is not None
@@ -734,6 +743,7 @@ class WebSocketGatewayServer:
                                             prompt["is_barge_in_enabled"] = False
                                     payload["prompts"] = prompts
                                     stream_terminator = None
+                                    stream_collection_config = {}
                             value = envelope(
                                 message_type=item.message_type,
                                 seq=server_seq,
