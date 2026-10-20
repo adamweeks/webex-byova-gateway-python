@@ -23,6 +23,7 @@ from src.transports.websocket_server import (
     WebSocketGatewayServer,
     WebSocketProtocolError,
 )
+from tools.websocket_smoke import run as run_smoke
 
 
 class FakeRouter:
@@ -225,7 +226,9 @@ def test_discovery_uses_shared_router_catalog():
     asyncio.run(scenario())
 
 
-def test_local_audio_is_discoverable_and_streams_raw_audio_over_websocket(tmp_path):
+def test_local_audio_is_discoverable_and_streams_raw_audio_over_websocket(
+    tmp_path, capsys
+):
     """Exercise Local Audio through the real router and WebSocket adapter."""
     welcome_path = tmp_path / "welcome.wav"
     _write_wav(welcome_path)
@@ -285,11 +288,32 @@ def test_local_audio_is_discoverable_and_streams_raw_audio_over_websocket(tmp_pa
             )
             assert audio == bytes(range(256)) * 4
             await socket.close()
+            await _wait_for_release(server)
+
+            await run_smoke(
+                SimpleNamespace(
+                    url=str(client.make_url("/"))
+                    .rstrip("/")
+                    .replace("http://", "ws://"),
+                    mode="session",
+                    org_id="org-1",
+                    agent_id="Local Audio: Local Playback",
+                    conversation_id=None,
+                    timeout=5,
+                    sessions=4,
+                    hold_seconds=0.05,
+                    expect_shutdown=False,
+                    include_audio=False,
+                )
+            )
+            await _wait_for_release(server)
+            assert not server.registry.snapshot()
         finally:
             await client.close()
             server.shutdown()
 
     asyncio.run(scenario())
+    assert '"sessions": 4' in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -975,7 +999,8 @@ def _free_port() -> int:
         return probe.getsockname()[1]
 
 
-def test_runtime_stop_closes_active_calls_and_cleans_provider():
+@pytest.mark.parametrize("sessions", [1, 8])
+def test_runtime_stop_closes_active_calls_and_cleans_provider(sessions):
     """Gateway shutdown sends 1001 and ends the provider session once."""
 
     async def scenario():
@@ -986,27 +1011,33 @@ def test_runtime_stop_closes_active_calls_and_cleans_provider():
         runtime.start()
         try:
             async with aiohttp.ClientSession() as session:
-                voice = await session.ws_connect(f"ws://127.0.0.1:{port}/v1/va")
+                voices = [
+                    await session.ws_connect(f"ws://127.0.0.1:{port}/v1/va")
+                    for _ in range(sessions)
+                ]
                 discovery = await session.ws_connect(
                     f"ws://127.0.0.1:{port}/v1/listVirtualAgents"
                 )
-                await voice.send_json(_start())
-                assert (await voice.receive_json())["type"] == "VOICE_VA_RESPONSE"
+                for index, voice in enumerate(voices):
+                    await voice.send_json(_start(conversation_id=f"shutdown-{index}"))
+                    assert (await voice.receive_json())["type"] == "VOICE_VA_RESPONSE"
+                assert len(server.registry.snapshot()) == sessions
 
                 stopping = asyncio.create_task(asyncio.to_thread(runtime.stop))
-                close = await asyncio.wait_for(voice.receive(), timeout=5)
-                assert close.type == WSMsgType.CLOSE
-                assert voice.close_code == 1001
+                for voice in voices:
+                    close = await asyncio.wait_for(voice.receive(), timeout=5)
+                    assert close.type == WSMsgType.CLOSE
+                    assert voice.close_code == 1001
                 await asyncio.wait_for(discovery.receive(), timeout=5)
                 await asyncio.wait_for(stopping, timeout=15)
         finally:
             runtime.stop()
 
-        assert router.end_calls == 1
+        assert router.end_calls == sessions
         assert not server.registry.snapshot()
         assert [event["reason"] for event in _end_events(server)] == [
             "gateway_shutdown"
-        ]
+        ] * sessions
 
     asyncio.run(asyncio.wait_for(scenario(), timeout=20))
 

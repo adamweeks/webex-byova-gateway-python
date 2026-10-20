@@ -80,10 +80,37 @@ python tools/websocket_smoke.py --url ws://127.0.0.1:58765 --mode session \
   --agent-id 'Local Audio: Local Playback'
 ```
 
-Discovery must list Local Audio, and session start must return a response. This
-client reads only the first response frame; use the socket tests to validate
-complete chunk streams and their empty-audio FINAL terminator. Stop the local
-gateway with Control-C after the checks.
+Discovery must list Local Audio. The session probe now reads through FINAL,
+checks conversation/sequence ordering, validates base64 audio and requires the
+explicit empty-audio terminator after streamed audio. Early disconnects, error
+frames and incomplete streams fail the command. `--timeout` bounds the whole
+response, so a trickle of frames cannot keep an incomplete probe alive forever.
+Default session output contains only conversation IDs and frame/audio byte
+counts; `--include-audio` explicitly prints complete frames with call content.
+
+Use a small concurrent run against the local listener to check that sessions
+complete and remain open for five seconds:
+
+```bash
+python tools/websocket_smoke.py --url ws://127.0.0.1:58765 --mode session \
+  --agent-id 'Local Audio: Local Playback' --sessions 8 --hold-seconds 5
+```
+
+For a shutdown check, replace the hold setting with
+`--hold-seconds 30 --expect-shutdown`, then stop the local gateway with Control-C
+after eight `session_ready` progress events appear on stderr. Every session
+must finish its initial response and close with
+1001 within the hold window. A normal close, early disconnect or missing
+shutdown fails. Check gateway/provider cleanup separately: a 1001 receipt alone
+does not prove that their resources were released. `--sessions` is limited to
+1–100 and hold time to 0–300 seconds; each concurrent call gets a unique ID.
+`BYOVA_WEBSOCKET_TOKEN` supplies the existing authentication header for an
+approved authenticated target without placing the token on the command line.
+
+These direct socket checks do not place a phone call or certify WxCC media,
+DTMF, provider recognition, Flow variables or production capacity. The local
+socket regression tests also check shutdown with eight active conversations,
+one provider cleanup per conversation and no remaining registry leases.
 
 ## 2. Prepare the live target when returning
 

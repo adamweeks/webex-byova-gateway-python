@@ -25,6 +25,10 @@
 - [x] T018 [US5] Validate the current AWS SDK, socket voice/DTMF behavior and local cleanup.
 - [ ] T019 [US5] Deploy the Lex adapter to the approved dev target and run real WxCC-to-Lex calls.
 
+## Certification tooling (October 19)
+
+- [x] T020 [US3] Make direct smoke checks require complete ordered streams, support bounded concurrent sessions and optionally require shutdown close code 1001. Cover early disconnects, invalid frames, incomplete streams and multi-session cleanup locally. These checks do not complete deployed WxCC acceptance.
+
 ## Remaining baseline live acceptance
 
 - [ ] T012 [US1] Verify the intended private target, deployed commit, JWT, and discovery.
